@@ -149,6 +149,32 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
+              const SizedBox(height: 16),
+              Text(
+                '$_error',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: _loadRecordings,
+                icon: const Icon(Icons.refresh, size: 16, color: Colors.white70),
+                label: const Text('Retry', style: TextStyle(color: Colors.white70)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     // Top bar
     return Column(
       children: [
@@ -409,11 +435,13 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
                       ),
                     ),
 
-                    // 3-dot menu
-                    const Icon(
-                      Icons.more_vert,
-                      color: Colors.white54,
-                      size: 18,
+                    // Delete button
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      onPressed: () => _confirmDelete(entry),
+                      tooltip: 'Delete recording',
                     ),
                   ],
                 ),
@@ -449,6 +477,64 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
         ],
       ),
     );
+  }
+
+  void _confirmDelete(_FileEntry entry) {
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF161B22),
+        title: const Text('Delete recording?', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'Delete "${entry.name}" and all its files?',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    ).then((confirmed) {
+      if (confirmed == true) {
+        _deleteRecording(entry);
+      }
+    });
+  }
+
+  void _deleteRecording(_FileEntry entry) {
+    try {
+      for (final f in entry.files) {
+        f.deleteSync();
+        debugPrint('[saved] Deleted: ${f.path}');
+      }
+      _loadRecordings();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Deleted "${entry.name}"'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[saved] Delete error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Delete failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _openFile(File file) {

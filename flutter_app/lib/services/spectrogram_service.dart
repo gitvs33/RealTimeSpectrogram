@@ -153,9 +153,10 @@ class SpectrogramService extends ChangeNotifier {
         if (_liveFrames.length > maxLiveFrames) _liveFrames.removeAt(0);
       }
       if (_isRecording) _recordedFrames.add(af);
-
-      notifyListeners();
     }
+
+    // Single notify after processing all frames in this chunk
+    notifyListeners();
   }
 
   // ════════════════════════════════════════════════════════════
@@ -172,6 +173,7 @@ class SpectrogramService extends ChangeNotifier {
   void stopLivePreview() {
     _livePreviewActive = false;
     _liveFrames.clear();
+    _stopLocalCapture();
     notifyListeners();
   }
 
@@ -186,6 +188,7 @@ class SpectrogramService extends ChangeNotifier {
 
   void stopRecording() {
     _isRecording = false;
+    if (!_livePreviewActive) _stopLocalCapture();
     notifyListeners();
   }
 
@@ -211,15 +214,22 @@ class SpectrogramService extends ChangeNotifier {
       final csvPath = '${saveDir.path}/${filename}_stft.csv';
       final csvSink = File(csvPath).openWrite();
       csvSink.writeln('time_s,frequency_hz,amplitude,phase_radians');
-      for (final frame in _recordedFrames) {
+      final maxCsvFrames = _recordedFrames.length > 200
+          ? 200
+          : _recordedFrames.length;
+      final step = _recordedFrames.length ~/ maxCsvFrames;
+      int written = 0;
+      for (int fi = 0; fi < _recordedFrames.length && written < maxCsvFrames; fi += step) {
+        final frame = _recordedFrames[fi];
         final t = frame.time.toStringAsFixed(3);
-        for (int i = 0; i < frame.binCount; i++) {
+        for (int bi = 0; bi < frame.binCount && bi < 128; bi++) {
           csvSink.writeln(
-            '$t,${frame.frequencies[i].toStringAsFixed(1)},'
-            '${frame.magnitudes[i].toStringAsFixed(6)},'
-            '${frame.phases[i].toStringAsFixed(6)}',
+            '$t,${frame.frequencies[bi].toStringAsFixed(1)},'
+            '${frame.magnitudes[bi].toStringAsFixed(6)},'
+            '${frame.phases[bi].toStringAsFixed(6)}',
           );
         }
+        written++;
       }
       await csvSink.flush();
       await csvSink.close();
@@ -228,8 +238,8 @@ class SpectrogramService extends ChangeNotifier {
       try {
         final pngBytes = await SpectrogramRenderer.renderToPng(
           frames: _recordedFrames,
-          width: 1200,
-          height: 600,
+          width: 600,
+          height: 300,
         );
         if (pngBytes != null) {
           final pngPath = '${saveDir.path}/${filename}_spectrogram.png';
@@ -255,8 +265,8 @@ class SpectrogramService extends ChangeNotifier {
         'frequencies': _recordedFrames.isNotEmpty
             ? _recordedFrames.first.frequencies
             : [],
-        'magnitudes': _recordedFrames.map((f) => f.magnitudes).toList(),
-        'phases': _recordedFrames.map((f) => f.phases).toList(),
+        'magnitudes': _recordedFrames.map((f) => f.magnitudes.sublist(0, 64)).toList(),
+        'phases': _recordedFrames.map((f) => f.phases.sublist(0, 64)).toList(),
       };
       await File(
         jsonPath,
@@ -272,7 +282,6 @@ class SpectrogramService extends ChangeNotifier {
       _isSaving = false;
       notifyListeners();
     }
-    notifyListeners();
   }
 
   // ── WAV writer for local mode ──
