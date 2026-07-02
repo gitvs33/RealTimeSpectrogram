@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'services/spectrogram_service.dart';
 import 'widgets/spectrogram_painter.dart';
 import 'widgets/data_table_view.dart';
+import 'widgets/saved_recordings_view.dart';
 
 void main() {
   runApp(
@@ -46,7 +47,7 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
   final TextEditingController _hostCtrl = TextEditingController(text: 'localhost');
   final TextEditingController _portCtrl = TextEditingController(text: '8765');
   final TextEditingController _filenameCtrl = TextEditingController(text: 'recording');
-  int _selectedTab = 0; // 0=spectrogram, 1=phase, 2=data
+  int _selectedTab = 0; // 0=spectrogram, 1=phase, 2=data, 3=saved
 
   @override
   void initState() {
@@ -158,6 +159,7 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
                     _tabButton('Spectrogram', 0),
                     _tabButton('Phase View', 1),
                     _tabButton('Numerical Data', 2),
+                    _tabButton('Saved', 3),
                   ],
                 ),
               ),
@@ -168,7 +170,9 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
                     ? _buildSpectrogramView(svc)
                     : _selectedTab == 1
                         ? _buildPhaseView(svc)
-                        : _buildDataView(svc),
+                        : _selectedTab == 2
+                            ? _buildDataView(svc)
+                            : _buildSavedRecordingsView(),
               ),
 
               // ── Control panel ──
@@ -355,6 +359,11 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
       );
     }
     return StftDataTableView(frames: displayFrames);
+  }
+
+  // ── Saved Recordings ──
+  Widget _buildSavedRecordingsView() {
+    return const SavedRecordingsView();
   }
 
   // ── Controls ──
