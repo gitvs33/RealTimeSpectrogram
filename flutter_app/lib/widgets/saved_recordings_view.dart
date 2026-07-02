@@ -32,6 +32,11 @@ class SavedRecording {
         orElse: () => null,
       );
 
+  File? get pngFile => files.cast<File?>().firstWhere(
+        (f) => f?.path.endsWith('.png') ?? false,
+        orElse: () => null,
+      );
+
   String get sizeStr {
     int total = 0;
     for (final f in files) {
@@ -137,9 +142,11 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
   /// e.g. "dir/foo_stft.csv" → "foo",  "dir/bar.wav" → "bar"
   String _stemOf(String path) {
     final name = path.split('/').last;
-    // Strip known suffixes: _stft.csv, _stft.json, .wav, .csv, .json
+    // Strip known suffixes: _stft.csv, _stft.json, _spectrogram.png, .wav, .csv, .json
     var stem = name;
-    if (stem.endsWith('_stft.csv')) {
+    if (stem.endsWith('_spectrogram.png')) {
+      stem = stem.substring(0, stem.length - '_spectrogram.png'.length);
+    } else if (stem.endsWith('_stft.csv')) {
       stem = stem.substring(0, stem.length - '_stft.csv'.length);
     } else if (stem.endsWith('_stft.json')) {
       stem = stem.substring(0, stem.length - '_stft.json'.length);
@@ -149,6 +156,8 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
       stem = stem.substring(0, stem.length - '.csv'.length);
     } else if (stem.endsWith('.json')) {
       stem = stem.substring(0, stem.length - '.json'.length);
+    } else if (stem.endsWith('.png')) {
+      stem = stem.substring(0, stem.length - '.png'.length);
     }
     return stem;
   }
@@ -157,6 +166,7 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
     if (path.endsWith('.wav')) return '🎵';
     if (path.endsWith('.csv')) return '📊';
     if (path.endsWith('.json')) return '📋';
+    if (path.endsWith('.png')) return '🖼️';
     return '📄';
   }
 
@@ -164,6 +174,7 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
     if (path.endsWith('.wav')) return 'WAV Audio';
     if (path.endsWith('.csv')) return 'CSV Data (editable)';
     if (path.endsWith('.json')) return 'JSON Matrices';
+    if (path.endsWith('.png')) return 'Spectrogram Image';
     return path.split('/').last;
   }
 

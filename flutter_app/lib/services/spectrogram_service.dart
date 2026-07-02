@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import '../models/audio_frame.dart';
 import 'fft_utils.dart';
+import 'spectrogram_renderer.dart';
 
 /// Audio source mode.
 enum AudioMode {
@@ -379,6 +380,19 @@ class SpectrogramService extends ChangeNotifier {
       }
       await csvSink.flush();
       await csvSink.close();
+
+      // ── PNG spectrogram image ──
+      if (mode == AudioMode.local) {
+        final pngBytes = await SpectrogramRenderer.renderToPng(
+          frames: _recordedFrames,
+          width: 1200,
+          height: 600,
+        );
+        if (pngBytes != null) {
+          await File('${saveDir.path}/${filename}_spectrogram.png')
+              .writeAsBytes(pngBytes);
+        }
+      }
 
       // ── JSON ──
       final jsonPath = '${saveDir.path}/${filename}_stft.json';
