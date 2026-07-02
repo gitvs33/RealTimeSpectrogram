@@ -1,72 +1,50 @@
-import 'dart:typed_data';
 import 'dart:math';
-import 'dart:ui' as ui;
-import 'package:flutter/material.dart';
+import 'dart:typed_data';
+import 'package:image/image.dart' as img;
 import '../models/audio_frame.dart';
 
-/// Renders a spectrogram image from recorded [AudioFrame] data.
+/// Renders a spectrogram PNG image from recorded [AudioFrame] data.
 ///
-/// Uses [dart:ui] Canvas + PictureRecorder to produce a PNG without
-/// needing any widget to be visible on screen.  The output matches the
-/// look of [SpectrogramPainter] (inferno-like colormap, dB scale, axis
-/// labels).
+/// Uses the pure-Dart [image] package to draw pixel-by-pixel, so it
+/// works reliably in any context (no Flutter rendering pipeline
+/// dependency).
 class SpectrogramRenderer {
   SpectrogramRenderer._();
 
-  /// Build a [ui.Image] from recorded frames.
+  /// Render the spectrogram to PNG bytes.
   ///
   /// Returns `null` if [frames] is empty.
-  static Future<ui.Image?> render({
+  static Future<Uint8List?> renderToPng({
     required List<AudioFrame> frames,
-    int width = 800,
-    int height = 400,
+    int width = 1200,
+    int height = 600,
     double maxDisplayFreq = 8000,
   }) async {
     if (frames.isEmpty) return null;
 
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()));
-
-    _drawSpectrogram(canvas, Size(width.toDouble(), height.toDouble()), frames, maxDisplayFreq);
-
-    final picture = recorder.endRecording();
-    return picture.toImage(width, height);
+    final image = img.Image(width: width, height: height);
+    _drawSpectrogram(image, frames, maxDisplayFreq);
+    return Uint8List.fromList(img.encodePng(image));
   }
 
-  /// Convenience: render directly to PNG bytes.
-  static Future<Uint8List?> renderToPng({
-    required List<AudioFrame> frames,
-    int width = 800,
-    int height = 400,
-    double maxDisplayFreq = 8000,
-  }) async {
-    final image = await render(
-      frames: frames,
-      width: width,
-      height: height,
-      maxDisplayFreq: maxDisplayFreq,
-    );
-    if (image == null) return null;
-    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-    return byteData?.buffer.asUint8List();
-  }
+  // ───── internal drawing logic ─────
 
-  // ───── internal drawing logic (mirrors SpectrogramPainter) ─────
-
+  /// Inferno-inspired color gradient (256-entry RGB lookup table).
   static final Uint8List _colorLut = _buildColorLut();
 
   static Uint8List _buildColorLut() {
-    const colors = [
-      Color(0xFF000004),
-      Color(0xFF0c0887),
-      Color(0xFF4b0f6b),
-      Color(0xFF931e6c),
-      Color(0xFFd4485b),
-      Color(0xFFfb8844),
-      Color(0xFFf6d644),
-      Color(0xFFfcffa4),
+    const colors = <int>[
+      0xFF000004,
+      0xFF0c0887,
+      0xFF4b0f6b,
+      0xFF931e6c,
+      0xFFd4485b,
+      0xFFfb8844,
+      0xFFf6d644,
+      0xFFfcffa4,
     ];
-    final lut = Uint8List(256 * 4);
+
+    final lut = Uint8List(256 * 3); // RGB per entry
     for (int i = 0; i < 256; i++) {
       final t = i / 255.0;
       final pos = t * (colors.length - 1);
@@ -74,31 +52,34 @@ class SpectrogramRenderer {
       final frac = pos - idx;
       final c0 = colors[idx.clamp(0, colors.length - 1)];
       final c1 = colors[(idx + 1).clamp(0, colors.length - 1)];
-      final r = (c0.r + (c1.r - c0.r) * frac);
-      final g = (c0.g + (c1.g - c0.g) * frac);
-      final b = (c0.b + (c1.b - c0.b) * frac);
-      lut[i * 4] = (r * 255).round().clamp(0, 255);
-      lut[i * 4 + 1] = (g * 255).round().clamp(0, 255);
-      lut[i * 4 + 2] = (b * 255).round().clamp(0, 255);
-      lut[i * 4 + 3] = 255;
+
+      final r0 = (c0 >> 16) & 0xFF;
+      final g0 = (c0 >> 8) & 0xFF;
+      final b0 = c0 & 0xFF;
+      final r1 = (c1 >> 16) & 0xFF;
+      final g1 = (c1 >> 8) & 0xFF;
+      final b1 = c1 & 0xFF;
+
+      lut[i * 3] = (r0 + (r1 - r0) * frac).round().clamp(0, 255);
+      lut[i * 3 + 1] = (g0 + (g1 - g0) * frac).round().clamp(0, 255);
+      lut[i * 3 + 2] = (b0 + (b1 - b0) * frac).round().clamp(0, 255);
     }
     return lut;
   }
 
   static void _drawSpectrogram(
-    Canvas canvas,
-    Size size,
+    img.Image image,
     List<AudioFrame> frames,
     double maxDisplayFreq,
   ) {
+    final w = image.width;
+    final h = image.height;
+    if (frames.isEmpty) return;
+
     // ── background ──
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      Paint()..color = const Color(0xFF0D1117),
-    );
+    image.clear(img.ColorRgb8(13, 17, 23));
 
     final numFrames = frames.length;
-    if (numFrames == 0) return;
     final freqs = frames.first.frequencies;
 
     int maxBin = freqs.length - 1;
@@ -111,16 +92,15 @@ class SpectrogramRenderer {
     maxBin = maxBin.clamp(1, freqs.length - 1);
     final binCount = maxBin + 1;
 
-    // margin for labels
-    const leftMargin = 56.0;
-    const bottomMargin = 22.0;
-    final plotW = size.width - leftMargin;
-    final plotH = size.height - bottomMargin;
+    // margins for labels
+    const leftMargin = 56;
+    const bottomMargin = 22;
+    final plotW = w - leftMargin;
+    final plotH = h - bottomMargin;
 
-    final cellW = plotW / numFrames;
-    final cellH = plotH / binCount;
+    if (plotW <= 0 || plotH <= 0 || binCount <= 0) return;
 
-    // dB range
+    // Compute dB range across all frames for the dynamic range
     double minDb = double.infinity;
     double maxDb = double.negativeInfinity;
     for (final frame in frames) {
@@ -132,7 +112,7 @@ class SpectrogramRenderer {
         }
       }
     }
-    if (minDb == double.infinity) {
+    if (!minDb.isFinite) {
       minDb = -80;
       maxDb = 0;
     }
@@ -141,56 +121,81 @@ class SpectrogramRenderer {
     }
     final dbRange = maxDb - minDb;
 
-    // Draw columns
-    for (int col = 0; col < numFrames; col++) {
-      final frame = frames[col];
-      final x = leftMargin + col * cellW;
-      final mags = frame.magnitudes;
+    // Draw pixel columns
+    for (int px = 0; px < plotW; px++) {
+      final colFrac = px / plotW * numFrames;
+      final colIdx = colFrac.floor().clamp(0, numFrames - 1);
+      final colFracInFrame = colFrac - colIdx;
+      final nextColIdx = (colIdx + 1).clamp(0, numFrames - 1);
+      final frame = frames[colIdx];
+      final nextFrame = frames[nextColIdx];
 
-      for (int row = 0; row <= maxBin && row < mags.length; row++) {
-        final db = _toDb(mags[row]);
-        final norm = db.isFinite ? ((db - minDb) / dbRange).clamp(0.0, 1.0) : 0.0;
+      for (int py = 0; py < plotH; py++) {
+        final binFrac = py / plotH * binCount;
+        final binIdx = binFrac.floor().clamp(0, binCount - 1);
+        final binFracInBin = binFrac - binIdx;
+        final nextBinIdx = (binIdx + 1).clamp(0, binCount - 1);
+
+        // Bilinear-interpolated magnitude
+        final mag00 = (binIdx < frame.magnitudes.length) ? frame.magnitudes[binIdx] : 0;
+        final mag10 = (nextBinIdx < frame.magnitudes.length) ? frame.magnitudes[nextBinIdx] : 0;
+        final mag01 = (binIdx < nextFrame.magnitudes.length) ? nextFrame.magnitudes[binIdx] : 0;
+        final mag11 = (nextBinIdx < nextFrame.magnitudes.length) ? nextFrame.magnitudes[nextBinIdx] : 0;
+
+        final mag0 = mag00 + (mag10 - mag00) * binFracInBin;
+        final mag1 = mag01 + (mag11 - mag01) * binFracInBin;
+        final mag = mag0 + (mag1 - mag0) * colFracInFrame;
+
+        final db = _toDb(mag);
+        double norm = db.isFinite ? ((db - minDb) / dbRange) : 0.0;
+        norm = norm.clamp(0.0, 1.0);
         final colorIdx = (norm * 255).round().clamp(0, 255);
-        final r = _colorLut[colorIdx * 4] / 255.0;
-        final g = _colorLut[colorIdx * 4 + 1] / 255.0;
-        final b = _colorLut[colorIdx * 4 + 2] / 255.0;
 
-        canvas.drawRect(
-          Rect.fromLTWH(x, plotH - (row + 1) * cellH, cellW + 0.5, cellH + 0.5),
-          Paint()..color = Color.fromRGBO(
-            (r * 255).round(),
-            (g * 255).round(),
-            (b * 255).round(),
-            1.0,
-          ),
-        );
+        // Invert Y: bin 0 is low frequency (bottom)
+        final drawY = h - py - 1;
+        if (drawY >= 0 && drawY < h) {
+          image.setPixelRgb(
+            leftMargin + px,
+            drawY,
+            _colorLut[colorIdx * 3],
+            _colorLut[colorIdx * 3 + 1],
+            _colorLut[colorIdx * 3 + 2],
+          );
+        }
       }
     }
 
-    // ── axis labels ──
-    final labelStyle = TextStyle(color: Colors.white60, fontSize: 11);
-    final smallStyle = TextStyle(color: Colors.white38, fontSize: 10);
+    // ── title ──
+    _drawText(image, 'Spectrogram (dB)', leftMargin + 4, 4);
 
-    // Frequency labels
+    // ── frequency axis labels ──
     const freqLabelCount = 5;
     for (int i = 0; i <= freqLabelCount; i++) {
       final binIdx = (binCount * i / freqLabelCount).round().clamp(0, binCount - 1);
       final freq = freqs[binIdx];
-      final y = plotH - (binIdx + 0.5) * cellH;
-      _drawText(canvas, '${freq.round()} Hz', Offset(4, y - 6), labelStyle);
+      final y = h - (binIdx / binCount * plotH).round() - 8;
+      _drawText(image, '${freq.round()} Hz', 4, y);
     }
 
-    // Time labels
+    // ── time axis labels ──
     const timeLabelCount = 6;
     for (int i = 0; i <= timeLabelCount; i++) {
       final frameIdx = (numFrames * i / timeLabelCount).round().clamp(0, numFrames - 1);
       final time = frames[frameIdx].time;
-      final x = leftMargin + frameIdx * cellW;
-      _drawText(canvas, '${time.toStringAsFixed(1)}s', Offset(x - 10, size.height - 18), smallStyle);
+      final x = leftMargin + (frameIdx / numFrames * plotW).round();
+      _drawText(image, '${time.toStringAsFixed(1)}s', x - 12, h - 16);
     }
 
-    // Title
-    _drawText(canvas, 'Spectrogram (dB magnitude)', Offset(leftMargin + 8, 4), labelStyle);
+    // ── axes ──
+    final axisColor = img.ColorRgb8(60, 70, 80);
+    // Left axis (vertical)
+    for (int y = 0; y < h - bottomMargin; y++) {
+      image.setPixelRgb(leftMargin, y, axisColor.r, axisColor.g, axisColor.b);
+    }
+    // Bottom axis (horizontal)
+    for (int x = leftMargin; x < w; x++) {
+      image.setPixelRgb(x, h - bottomMargin, axisColor.r, axisColor.g, axisColor.b);
+    }
   }
 
   static double _toDb(double magnitude) {
@@ -198,11 +203,132 @@ class SpectrogramRenderer {
     return 20 * log(magnitude) / ln10;
   }
 
-  static void _drawText(Canvas canvas, String text, Offset offset, TextStyle style) {
-    final tp = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, offset);
+  // ── 5×7 bitmap font renderer ──
+
+  static void _drawText(img.Image image, String text, int x, int y) {
+    final color = img.ColorRgb8(200, 200, 200);
+    for (int ci = 0; ci < text.length; ci++) {
+      final char = text.codeUnitAt(ci);
+      if (char >= 32 && char < 128) {
+        _drawChar(image, char, x + ci * 6, y, color);
+      }
+    }
   }
+
+  static void _drawChar(img.Image image, int charCode, int x, int y, img.Color color) {
+    if (charCode < 32 || charCode >= 128) return;
+    final glyph = _font5x7[charCode - 32];
+    for (int row = 0; row < 7; row++) {
+      final bits = glyph[row];
+      for (int col = 0; col < 5; col++) {
+        if ((bits >> (4 - col)) & 1 == 1) {
+          final px = x + col;
+          final py = y + row;
+          if (px >= 0 && px < image.width && py >= 0 && py < image.height) {
+            image.setPixelRgb(px, py, color.r, color.g, color.b);
+          }
+        }
+      }
+    }
+  }
+
+  /// 5×7 bitmap font (ASCII 32–126).
+  /// Each entry is 7 bytes, each byte = 5 bits.
+  static const List<List<int>> _font5x7 = [
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // space
+    [0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04], // !
+    [0x0A, 0x0A, 0x0A, 0x00, 0x00, 0x00, 0x00], // "
+    [0x0A, 0x0A, 0x1F, 0x0A, 0x1F, 0x0A, 0x0A], // #
+    [0x04, 0x0F, 0x14, 0x0E, 0x05, 0x1E, 0x04], // $
+    [0x19, 0x1A, 0x08, 0x04, 0x02, 0x0B, 0x13], // %
+    [0x0C, 0x12, 0x14, 0x08, 0x15, 0x12, 0x0D], // &
+    [0x04, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00], // '
+    [0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02], // (
+    [0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08], // )
+    [0x00, 0x04, 0x15, 0x0E, 0x15, 0x04, 0x00], // *
+    [0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00], // +
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x08], // ,
+    [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00], // -
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04], // .
+    [0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10], // /
+    [0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E], // 0
+    [0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E], // 1
+    [0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F], // 2
+    [0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E], // 3
+    [0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02], // 4
+    [0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E], // 5
+    [0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E], // 6
+    [0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08], // 7
+    [0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E], // 8
+    [0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C], // 9
+    [0x00, 0x00, 0x04, 0x00, 0x00, 0x04, 0x00], // :
+    [0x00, 0x00, 0x04, 0x00, 0x00, 0x04, 0x08], // ;
+    [0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02], // <
+    [0x00, 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00], // =
+    [0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08], // >
+    [0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04], // ?
+    [0x0E, 0x11, 0x17, 0x15, 0x17, 0x10, 0x0E], // @
+    [0x04, 0x0A, 0x11, 0x11, 0x1F, 0x11, 0x11], // A
+    [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E], // B
+    [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E], // C
+    [0x1C, 0x12, 0x11, 0x11, 0x11, 0x12, 0x1C], // D
+    [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F], // E
+    [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10], // F
+    [0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F], // G
+    [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11], // H
+    [0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E], // I
+    [0x01, 0x01, 0x01, 0x01, 0x01, 0x11, 0x0E], // J
+    [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11], // K
+    [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F], // L
+    [0x11, 0x1B, 0x15, 0x11, 0x11, 0x11, 0x11], // M
+    [0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11], // N
+    [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E], // O
+    [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10], // P
+    [0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D], // Q
+    [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11], // R
+    [0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E], // S
+    [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04], // T
+    [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E], // U
+    [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04], // V
+    [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11], // W
+    [0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11], // X
+    [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04], // Y
+    [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F], // Z
+    [0x0E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0E], // [
+    [0x10, 0x08, 0x08, 0x04, 0x02, 0x02, 0x01], // backslash
+    [0x0E, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E], // ]
+    [0x04, 0x0A, 0x11, 0x00, 0x00, 0x00, 0x00], // ^
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F], // _
+    [0x08, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00], // `
+    [0x00, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F], // a
+    [0x10, 0x10, 0x1E, 0x11, 0x11, 0x11, 0x1E], // b
+    [0x00, 0x00, 0x0E, 0x10, 0x10, 0x11, 0x0E], // c
+    [0x01, 0x01, 0x0F, 0x11, 0x11, 0x11, 0x0F], // d
+    [0x00, 0x00, 0x0E, 0x11, 0x1F, 0x10, 0x0E], // e
+    [0x06, 0x08, 0x1E, 0x08, 0x08, 0x08, 0x08], // f
+    [0x00, 0x00, 0x0F, 0x11, 0x11, 0x0F, 0x01], // g
+    [0x10, 0x10, 0x1E, 0x11, 0x11, 0x11, 0x11], // h
+    [0x04, 0x00, 0x0C, 0x04, 0x04, 0x04, 0x0E], // i
+    [0x02, 0x00, 0x06, 0x02, 0x02, 0x02, 0x0C], // j
+    [0x10, 0x10, 0x12, 0x14, 0x18, 0x14, 0x12], // k
+    [0x0C, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E], // l
+    [0x00, 0x00, 0x1A, 0x15, 0x15, 0x15, 0x11], // m
+    [0x00, 0x00, 0x1E, 0x11, 0x11, 0x11, 0x11], // n
+    [0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E], // o
+    [0x00, 0x00, 0x1E, 0x11, 0x11, 0x1E, 0x10], // p
+    [0x00, 0x00, 0x0F, 0x11, 0x11, 0x0F, 0x01], // q
+    [0x00, 0x00, 0x16, 0x18, 0x10, 0x10, 0x10], // r
+    [0x00, 0x00, 0x0E, 0x10, 0x0E, 0x01, 0x1E], // s
+    [0x08, 0x08, 0x1E, 0x08, 0x08, 0x09, 0x06], // t
+    [0x00, 0x00, 0x11, 0x11, 0x11, 0x11, 0x0E], // u
+    [0x00, 0x00, 0x11, 0x11, 0x11, 0x0A, 0x04], // v
+    [0x00, 0x00, 0x11, 0x11, 0x15, 0x1B, 0x11], // w
+    [0x00, 0x00, 0x11, 0x0A, 0x04, 0x0A, 0x11], // x
+    [0x00, 0x00, 0x11, 0x11, 0x0F, 0x01, 0x0E], // y
+    [0x00, 0x00, 0x1F, 0x02, 0x04, 0x08, 0x1F], // z
+    [0x02, 0x04, 0x04, 0x08, 0x04, 0x04, 0x02], // {
+    [0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04], // |
+    [0x08, 0x04, 0x04, 0x02, 0x04, 0x04, 0x08], // }
+    [0x00, 0x00, 0x08, 0x15, 0x02, 0x00, 0x00], // ~
+  ];
 }
