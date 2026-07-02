@@ -25,7 +25,7 @@ class SpectrogramPainter extends CustomPainter {
   static final Uint8List _colorLut = _buildColorLut();
 
   static Uint8List _buildColorLut() {
-    // Inferno-inspired gradient: black → purple → orange → yellow → white
+    // Dark inferno: bottom 25% → pure black for better contrast
     const colors = [
       Color(0xFF000004),
       Color(0xFF0c0887),
@@ -38,7 +38,17 @@ class SpectrogramPainter extends CustomPainter {
     ];
     final lut = Uint8List(256 * 4); // RGBA per entry
     for (int i = 0; i < 256; i++) {
-      final t = i / 255.0;
+      double t = i / 255.0;
+      // Bottom 25% → pure black
+      if (t < 0.25) {
+        lut[i * 4] = 0;
+        lut[i * 4 + 1] = 0;
+        lut[i * 4 + 2] = 0;
+        lut[i * 4 + 3] = 255;
+        continue;
+      }
+      // Remap remaining 75% across the gradient
+      t = (t - 0.25) / 0.75;
       final pos = t * (colors.length - 1);
       final idx = pos.floor();
       final frac = pos - idx;

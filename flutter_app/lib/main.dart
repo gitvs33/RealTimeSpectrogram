@@ -155,8 +155,8 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
                     : _buildSavedRecordingsView(),
               ),
 
-              // ── Control panel ──
-              _buildControlPanel(svc),
+              // ── Control panel (Spectrogram tab only) ──
+              if (_selectedTab == 0) _buildControlPanel(svc),
             ],
           );
         },
