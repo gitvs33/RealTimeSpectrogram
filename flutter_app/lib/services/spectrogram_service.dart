@@ -234,12 +234,17 @@ class SpectrogramService extends ChangeNotifier {
       await csvSink.flush();
       await csvSink.close();
 
-      // ── PNG spectrogram image ──
+      // ── PNG spectrogram image (full recording width) ──
       try {
+        final numFrames = _recordedFrames.length;
+        // Each frame gets ~2px; cap at 4000×1600 (6.4M pixels ≈ 25MB image)
+        final pngWidth = (numFrames * 2).round().clamp(600, 4000);
+        final pngHeight = (pngWidth * 0.4).round().clamp(300, 1600);
+        debugPrint('[save] PNG render ${numFrames}frames → ${pngWidth}x$pngHeight');
         final pngBytes = await SpectrogramRenderer.renderToPng(
           frames: _recordedFrames,
-          width: 600,
-          height: 300,
+          width: pngWidth,
+          height: pngHeight,
         );
         if (pngBytes != null) {
           final pngPath = '${saveDir.path}/${filename}_spectrogram.png';
