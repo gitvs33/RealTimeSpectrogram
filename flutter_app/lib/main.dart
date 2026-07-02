@@ -240,6 +240,8 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
               scrollOffset: _spectrogramScrollOffset,
               frameWidth: frameWidth,
             ),
+            width: viewportW,
+            height: constraints.maxHeight,
             onDrag: (dx) {
               if (!svc.isRecording && !svc.livePreviewActive) {
                 setState(() {
@@ -289,6 +291,8 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
               scrollOffset: _phaseScrollOffset,
               frameWidth: frameWidth,
             ),
+            width: viewportW,
+            height: constraints.maxHeight,
             onDrag: (dx) {
               if (!svc.isRecording && !svc.livePreviewActive) {
                 setState(() {
@@ -305,8 +309,11 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
   }
 
   /// Shared film-strip wrapper: GestureDetector + ClipRect + CustomPaint
+  /// Uses explicit [width]x[height] to avoid layout issues with Size.infinite.
   Widget _buildFilmStrip({
     required CustomPainter painter,
+    required double width,
+    required double height,
     required void Function(double dx) onDrag,
   }) {
     return GestureDetector(
@@ -314,7 +321,7 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
       child: ClipRect(
         child: CustomPaint(
           painter: painter,
-          size: Size.infinite,
+          size: Size(width, height),
         ),
       ),
     );
@@ -453,19 +460,28 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
                   height: 40,
                   margin: const EdgeInsets.only(bottom: 16),
                   child: ElevatedButton.icon(
-                    onPressed: svc.recordedFrameCount > 0
+                    onPressed: (!svc.isSaving && svc.recordedFrameCount > 0)
                         ? () async {
                             final name = _filenameCtrl.text.trim().isEmpty
                                 ? 'recording'
                                 : _filenameCtrl.text.trim();
-                            await svc.saveRecording(name);
                             _filenameCtrl.clear();
+                            await svc.saveRecording(name);
                           }
                         : null,
-                    icon: const Icon(Icons.save, size: 16, color: Colors.white),
-                    label: const Text(
-                      'Save',
-                      style: TextStyle(color: Colors.white),
+                    icon: svc.isSaving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.save, size: 16, color: Colors.white),
+                    label: Text(
+                      svc.isSaving ? 'Saving…' : 'Save',
+                      style: const TextStyle(color: Colors.white),
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF1E88E5), // Blue accent

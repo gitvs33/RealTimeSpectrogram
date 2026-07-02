@@ -34,6 +34,7 @@ class SpectrogramService extends ChangeNotifier {
 
   String _connectionError = '';
   String _saveMessage = '';
+  bool _isSaving = false;
 
   // ── Getters ──
   bool get isRecording => _isRecording;
@@ -53,6 +54,7 @@ class SpectrogramService extends ChangeNotifier {
 
   String get connectionError => _connectionError;
   String get saveMessage => _saveMessage;
+  bool get isSaving => _isSaving;
 
   // ════════════════════════════════════════════════════════════
   //  LOCAL CAPTURE MODE  (mic + STFT on-device)
@@ -190,6 +192,9 @@ class SpectrogramService extends ChangeNotifier {
   /// Save recorded data.
   Future<void> saveRecording(String filename) async {
     if (_recordedFrames.isEmpty) return;
+    _isSaving = true;
+    _saveMessage = '';
+    notifyListeners();
 
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -259,9 +264,13 @@ class SpectrogramService extends ChangeNotifier {
 
       _saveMessage = 'Saved to ${saveDir.path}/$filename.*';
       debugPrint('[save] Files written to $saveDir');
+      debugPrint('[save] Dir listing: ${saveDir.listSync().map((f) => (f as File).path.split('/').last).toList()}');
     } catch (e) {
       _connectionError = 'Save failed: $e';
       debugPrint('[save] Error: $e');
+    } finally {
+      _isSaving = false;
+      notifyListeners();
     }
     notifyListeners();
   }

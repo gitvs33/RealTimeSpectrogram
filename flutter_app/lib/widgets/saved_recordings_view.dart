@@ -428,17 +428,19 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
                         'WAV',
                         Colors.purpleAccent,
                         wavF.lengthSync(),
+                        file: wavF,
                       ),
                     if (csvF != null)
-                      _buildBadge('CSV', Colors.green, csvF.lengthSync()),
+                      _buildBadge('CSV', Colors.green, csvF.lengthSync(), file: csvF),
                     if (jsonF != null)
                       _buildBadge(
                         'JSON',
                         Colors.orangeAccent,
                         jsonF.lengthSync(),
+                        file: jsonF,
                       ),
                     if (pngF != null)
-                      _buildBadge('PNG', Colors.blue, pngF.lengthSync()),
+                      _buildBadge('PNG', Colors.blue, pngF.lengthSync(), file: pngF),
                   ],
                 ),
               ],
@@ -449,42 +451,70 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
     );
   }
 
-  Widget _buildBadge(String label, Color color, int sizeBytes) {
+  void _openFile(File file) {
+    debugPrint('[saved] Open file: ${file.path}');
+    if (Platform.isAndroid || Platform.isIOS) {
+      OpenFilex.open(file.path).then((result) {
+        if (result.type != ResultType.done && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('No app found to open ${file.path.split('.').last}'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      });
+    } else {
+      // Desktop: show the file path instead of trying to open
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('File: ${file.path}'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
+  Widget _buildBadge(String label, Color color, int sizeBytes, {File? file}) {
     final sizeStr = sizeBytes < 1024 * 1024
         ? '${(sizeBytes / 1024).toStringAsFixed(1)} KB'
         : '${(sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: color.withOpacity(0.5)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.insert_drive_file, size: 10, color: color),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
+    return GestureDetector(
+      onTap: file != null ? () => _openFile(file) : null,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: color.withOpacity(0.5)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.insert_drive_file, size: 10, color: color),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          sizeStr,
-          style: const TextStyle(color: Colors.white54, fontSize: 10),
-        ),
-      ],
+          const SizedBox(height: 4),
+          Text(
+            sizeStr,
+            style: const TextStyle(color: Colors.white54, fontSize: 10),
+          ),
+        ],
+      ),
     );
   }
 }
