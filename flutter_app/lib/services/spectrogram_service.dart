@@ -3,50 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/status.dart' as status;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import '../models/audio_frame.dart';
 import 'fft_utils.dart';
 import 'spectrogram_renderer.dart';
 
-/// Audio source mode.
-enum AudioMode {
-  /// Connect to a Python backend via WebSocket (desktop default).
-  network,
-
-  /// Capture audio locally from the device mic (mobile default).
-  local,
-}
-
-/// Manages the spectrogram audio pipeline.
-///
-/// Runs in one of two modes:
-/// - [AudioMode.network]: connects to a Python backend via WebSocket
-/// - [AudioMode.local]: captures mic + STFT entirely on-device
-///
-/// In local mode, [connect] is a no-op and the mic starts on
-/// [startLivePreview] / [startRecording]. Saved files go to the app's
-/// documents directory.
 class SpectrogramService extends ChangeNotifier {
-  // ── Mode ──
-  final AudioMode mode;
-
-  SpectrogramService({this.mode = AudioMode.network});
-
-  /// Auto-detect: mobile → local, desktop → network.
-  static AudioMode detectDefaultMode() {
-    try {
-      if (Platform.isAndroid || Platform.isIOS) return AudioMode.local;
-    } catch (_) {}
-    return AudioMode.network;
-  }
-
-  // ── Network state ──
-  WebSocketChannel? _channel;
-  Timer? _reconnectTimer;
-  Timer? _statusTimer;
+  SpectrogramService();
 
   // ── Local capture state ──
   final AudioRecorder _recorder = AudioRecorder();
@@ -60,7 +24,6 @@ class SpectrogramService extends ChangeNotifier {
   int _frameIndex = 0;
 
   // ── Shared state ──
-  bool _isConnected = false;
   bool _isRecording = false;
   bool _livePreviewActive = false;
   bool _isCapturing = false;
@@ -73,140 +36,30 @@ class SpectrogramService extends ChangeNotifier {
   String _saveMessage = '';
 
   // ── Getters ──
-  bool get isConnected   => mode == AudioMode.local ? true : _isConnected;
-  bool get isRecording   => _isRecording;
+  bool get isRecording => _isRecording;
   bool get livePreviewActive => _livePreviewActive;
   List<AudioFrame> get liveFrames => _liveFrames;
   List<AudioFrame> get recordedFrames => _recordedFrames;
   int get recordedFrameCount => _recordedFrames.length;
   double get recordingDuration =>
       _recordedFrames.isEmpty ? 0.0 : _recordedFrames.last.time;
+
+  String get formattedDuration {
+    final seconds = recordingDuration.floor();
+    final mins = (seconds ~/ 60).toString().padLeft(2, '0');
+    final secs = (seconds % 60).toString().padLeft(2, '0');
+    return '$mins:$secs';
+  }
+
   String get connectionError => _connectionError;
   String get saveMessage => _saveMessage;
-
-  // ════════════════════════════════════════════════════════════
-  //  NETWORK MODE  (WebSocket)
-  // ════════════════════════════════════════════════════════════
-
-  /// Connect to a Python backend (only in [AudioMode.network]).
-  Future<void> connect(String host, int port) async {
-    if (mode == AudioMode.local) return;
-    _connectionError = '';
-    try {
-      final uri = Uri.parse('ws://$host:$port');
-      _channel = WebSocketChannel.connect(uri);
-      await _channel!.ready;
-      _isConnected = true;
-      _connectionError = '';
-      _startStatusPolling();
-      notifyListeners();
-    } catch (e) {
-      _isConnected = false;
-      _connectionError = 'Connection failed: $e';
-      notifyListeners();
-      _scheduleReconnect(host, port);
-    }
-  }
-
-  void _scheduleReconnect(String host, int port) {
-    _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 3), () {
-      connect(host, port);
-    });
-  }
-
-  void _startStatusPolling() {
-    _statusTimer?.cancel();
-    _statusTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (_isConnected) send({'command': 'get_status'});
-    });
-  }
-
-  void send(Map<String, dynamic> command) {
-    if (_channel != null && _isConnected) {
-      _channel!.sink.add(jsonEncode(command));
-    }
-  }
-
-  void disconnect() {
-    if (mode == AudioMode.network) _stopLocalCapture();
-    _reconnectTimer?.cancel();
-    _statusTimer?.cancel();
-    _channel?.sink.close(status.goingAway);
-    _isConnected = false;
-    notifyListeners();
-  }
-
-  /// Register the WebSocket stream listener (called after connect).
-  void startListening() {
-    _channel?.stream.listen(
-      (data) {
-        if (data is String) _onNetworkMessage(data);
-      },
-      onError: (error) {
-        _isConnected = false;
-        _connectionError = 'Connection lost: $error';
-        notifyListeners();
-      },
-      onDone: () {
-        _isConnected = false;
-        notifyListeners();
-      },
-    );
-  }
-
-  void _onNetworkMessage(String raw) {
-    try {
-      final msg = jsonDecode(raw) as Map<String, dynamic>;
-      final type = msg['type'] as String?;
-
-      switch (type) {
-        case 'frame':
-          final frame =
-              AudioFrame.fromJson(msg['data'] as Map<String, dynamic>);
-          if (_livePreviewActive) {
-            _liveFrames.add(frame);
-            if (_liveFrames.length > maxLiveFrames) _liveFrames.removeAt(0);
-          }
-          if (_isRecording) _recordedFrames.add(frame);
-          notifyListeners();
-          break;
-        case 'recording_started':
-          _isRecording = true;
-          _recordedFrames.clear();
-          notifyListeners();
-          break;
-        case 'recording_stopped':
-          _isRecording = false;
-          notifyListeners();
-          break;
-        case 'saved':
-          _saveMessage = 'Saved: ${msg['filename']}';
-          notifyListeners();
-          break;
-        case 'full_data':
-          // ignore — local save uses recordedFrames directly
-          break;
-        case 'status':
-          _isRecording = msg['is_recording'] as bool? ?? _isRecording;
-          notifyListeners();
-          break;
-        case 'error':
-          _connectionError = msg['message'] as String? ?? 'Unknown error';
-          notifyListeners();
-          break;
-      }
-    } catch (e) {
-      debugPrint('Error parsing message: $e');
-    }
-  }
 
   // ════════════════════════════════════════════════════════════
   //  LOCAL CAPTURE MODE  (mic + STFT on-device)
   // ════════════════════════════════════════════════════════════
 
   Future<void> _startLocalCapture() async {
-    if (_isCapturing || mode != AudioMode.local) return;
+    if (_isCapturing) return;
     _isCapturing = true;
     _audioBuffer.clear();
     _frameIndex = 0;
@@ -311,7 +164,7 @@ class SpectrogramService extends ChangeNotifier {
     _liveFrames.clear();
     _livePreviewActive = true;
     notifyListeners();
-    if (mode == AudioMode.local && !_isCapturing) _startLocalCapture();
+    if (!_isCapturing) _startLocalCapture();
   }
 
   void stopLivePreview() {
@@ -326,40 +179,25 @@ class SpectrogramService extends ChangeNotifier {
     _isRecording = true;
     _frameIndex = 0;
     notifyListeners();
-    if (mode == AudioMode.network) {
-      send({'command': 'start_recording'});
-    } else {
-      if (!_isCapturing) _startLocalCapture();
-    }
+    if (!_isCapturing) _startLocalCapture();
   }
 
   void stopRecording() {
     _isRecording = false;
     notifyListeners();
-    if (mode == AudioMode.network) {
-      send({'command': 'stop_recording'});
-    }
   }
 
   /// Save recorded data.
-  ///
-  /// In [AudioMode.network] the backend writes WAV/CSV/JSON on its
-  /// filesystem and we also write CSV+JSON locally.
-  /// In [AudioMode.local] we write all three locally.
   Future<void> saveRecording(String filename) async {
     if (_recordedFrames.isEmpty) return;
-
-    if (mode == AudioMode.network) {
-      send({'command': 'save', 'filename': filename});
-    }
 
     try {
       final dir = await getApplicationDocumentsDirectory();
       final saveDir = Directory('${dir.path}/spectrogram_saves');
       await saveDir.create(recursive: true);
 
-      // ── WAV (only in local mode — we have raw audio) ──
-      if (mode == AudioMode.local && _rawAudio.isNotEmpty) {
+      // ── WAV ──
+      if (_rawAudio.isNotEmpty) {
         final wavPath = '${saveDir.path}/$filename.wav';
         _writeWav(wavPath, _rawAudio, sampleRate);
       }
@@ -382,24 +220,21 @@ class SpectrogramService extends ChangeNotifier {
       await csvSink.close();
 
       // ── PNG spectrogram image ──
-      if (mode == AudioMode.local) {
-        try {
-          final pngBytes = await SpectrogramRenderer.renderToPng(
-            frames: _recordedFrames,
-            width: 1200,
-            height: 600,
-          );
-          if (pngBytes != null) {
-            final pngPath = '${saveDir.path}/${filename}_spectrogram.png';
-            await File(pngPath).writeAsBytes(pngBytes);
-            debugPrint('[save] PNG written: $pngPath (${pngBytes.length} bytes)');
-          } else {
-            debugPrint('[save] PNG render returned null (empty frames?)');
-          }
-        } catch (e) {
-          debugPrint('[save] PNG render/write failed: $e');
-          // Don't abort the whole save — CSV/JSON can still be written
+      try {
+        final pngBytes = await SpectrogramRenderer.renderToPng(
+          frames: _recordedFrames,
+          width: 1200,
+          height: 600,
+        );
+        if (pngBytes != null) {
+          final pngPath = '${saveDir.path}/${filename}_spectrogram.png';
+          await File(pngPath).writeAsBytes(pngBytes);
+          debugPrint('[save] PNG written: $pngPath (${pngBytes.length} bytes)');
+        } else {
+          debugPrint('[save] PNG render returned null (empty frames?)');
         }
+      } catch (e) {
+        debugPrint('[save] PNG render/write failed: $e');
       }
 
       // ── JSON ──
@@ -418,9 +253,9 @@ class SpectrogramService extends ChangeNotifier {
         'magnitudes': _recordedFrames.map((f) => f.magnitudes).toList(),
         'phases': _recordedFrames.map((f) => f.phases).toList(),
       };
-      await File(jsonPath).writeAsString(
-        const JsonEncoder.withIndent('  ').convert(jsonData),
-      );
+      await File(
+        jsonPath,
+      ).writeAsString(const JsonEncoder.withIndent('  ').convert(jsonData));
 
       _saveMessage = 'Saved to ${saveDir.path}/$filename.*';
       debugPrint('[save] Files written to $saveDir');
@@ -457,13 +292,13 @@ class SpectrogramService extends ChangeNotifier {
 
     // fmt
     buf.add('fmt '.codeUnits);
-    w32(16);          // chunk size
-    w16(1);           // PCM
-    w16(1);           // mono
+    w32(16); // chunk size
+    w16(1); // PCM
+    w16(1); // mono
     w32(sr);
-    w32(sr * 2);      // byte rate
-    w16(2);           // block align
-    w16(16);          // bits per sample
+    w32(sr * 2); // byte rate
+    w16(2); // block align
+    w16(16); // bits per sample
 
     // data
     buf.add('data'.codeUnits);
@@ -479,8 +314,7 @@ class SpectrogramService extends ChangeNotifier {
 
   @override
   void dispose() {
-    if (mode == AudioMode.local) _stopLocalCapture();
-    disconnect();
+    _stopLocalCapture();
     super.dispose();
   }
 }

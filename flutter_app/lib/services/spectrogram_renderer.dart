@@ -137,10 +137,18 @@ class SpectrogramRenderer {
         final nextBinIdx = (binIdx + 1).clamp(0, binCount - 1);
 
         // Bilinear-interpolated magnitude
-        final mag00 = (binIdx < frame.magnitudes.length) ? frame.magnitudes[binIdx] : 0;
-        final mag10 = (nextBinIdx < frame.magnitudes.length) ? frame.magnitudes[nextBinIdx] : 0;
-        final mag01 = (binIdx < nextFrame.magnitudes.length) ? nextFrame.magnitudes[binIdx] : 0;
-        final mag11 = (nextBinIdx < nextFrame.magnitudes.length) ? nextFrame.magnitudes[nextBinIdx] : 0;
+        final mag00 = (binIdx < frame.magnitudes.length)
+            ? frame.magnitudes[binIdx]
+            : 0;
+        final mag10 = (nextBinIdx < frame.magnitudes.length)
+            ? frame.magnitudes[nextBinIdx]
+            : 0;
+        final mag01 = (binIdx < nextFrame.magnitudes.length)
+            ? nextFrame.magnitudes[binIdx]
+            : 0;
+        final mag11 = (nextBinIdx < nextFrame.magnitudes.length)
+            ? nextFrame.magnitudes[nextBinIdx]
+            : 0;
 
         final mag0 = mag00 + (mag10 - mag00) * binFracInBin;
         final mag1 = mag01 + (mag11 - mag01) * binFracInBin;
@@ -171,7 +179,10 @@ class SpectrogramRenderer {
     // ── frequency axis labels ──
     const freqLabelCount = 5;
     for (int i = 0; i <= freqLabelCount; i++) {
-      final binIdx = (binCount * i / freqLabelCount).round().clamp(0, binCount - 1);
+      final binIdx = (binCount * i / freqLabelCount).round().clamp(
+        0,
+        binCount - 1,
+      );
       final freq = freqs[binIdx];
       final y = h - (binIdx / binCount * plotH).round() - 8;
       _drawText(image, '${freq.round()} Hz', 4, y);
@@ -180,7 +191,10 @@ class SpectrogramRenderer {
     // ── time axis labels ──
     const timeLabelCount = 6;
     for (int i = 0; i <= timeLabelCount; i++) {
-      final frameIdx = (numFrames * i / timeLabelCount).round().clamp(0, numFrames - 1);
+      final frameIdx = (numFrames * i / timeLabelCount).round().clamp(
+        0,
+        numFrames - 1,
+      );
       final time = frames[frameIdx].time;
       final x = leftMargin + (frameIdx / numFrames * plotW).round();
       _drawText(image, '${time.toStringAsFixed(1)}s', x - 12, h - 16);
@@ -194,7 +208,13 @@ class SpectrogramRenderer {
     }
     // Bottom axis (horizontal)
     for (int x = leftMargin; x < w; x++) {
-      image.setPixelRgb(x, h - bottomMargin, axisColor.r, axisColor.g, axisColor.b);
+      image.setPixelRgb(
+        x,
+        h - bottomMargin,
+        axisColor.r,
+        axisColor.g,
+        axisColor.b,
+      );
     }
   }
 
@@ -215,7 +235,13 @@ class SpectrogramRenderer {
     }
   }
 
-  static void _drawChar(img.Image image, int charCode, int x, int y, img.Color color) {
+  static void _drawChar(
+    img.Image image,
+    int charCode,
+    int x,
+    int y,
+    img.Color color,
+  ) {
     if (charCode < 32 || charCode >= 128) return;
     final glyph = _font5x7[charCode - 32];
     for (int row = 0; row < 7; row++) {

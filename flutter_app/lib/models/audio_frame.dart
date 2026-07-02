@@ -15,9 +15,18 @@ class AudioFrame {
   factory AudioFrame.fromJson(Map<String, dynamic> json) {
     return AudioFrame(
       time: (json['time'] as num).toDouble(),
-      frequencies: (json['frequencies'] as List).cast<num>().map((e) => e.toDouble()).toList(),
-      magnitudes: (json['magnitudes'] as List).cast<num>().map((e) => e.toDouble()).toList(),
-      phases: (json['phases'] as List).cast<num>().map((e) => e.toDouble()).toList(),
+      frequencies: (json['frequencies'] as List)
+          .cast<num>()
+          .map((e) => e.toDouble())
+          .toList(),
+      magnitudes: (json['magnitudes'] as List)
+          .cast<num>()
+          .map((e) => e.toDouble())
+          .toList(),
+      phases: (json['phases'] as List)
+          .cast<num>()
+          .map((e) => e.toDouble())
+          .toList(),
     );
   }
 
@@ -40,8 +49,14 @@ class FullRecordingData {
 
   factory FullRecordingData.fromJson(Map<String, dynamic> json) {
     return FullRecordingData(
-      times: (json['times'] as List).cast<num>().map((e) => e.toDouble()).toList(),
-      frequencies: (json['frequencies'] as List).cast<num>().map((e) => e.toDouble()).toList(),
+      times: (json['times'] as List)
+          .cast<num>()
+          .map((e) => e.toDouble())
+          .toList(),
+      frequencies: (json['frequencies'] as List)
+          .cast<num>()
+          .map((e) => e.toDouble())
+          .toList(),
       magnitudes: (json['magnitudes'] as List)
           .cast<List>()
           .map((row) => row.cast<num>().map((e) => e.toDouble()).toList())

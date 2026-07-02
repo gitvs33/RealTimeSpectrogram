@@ -2,10 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/audio_frame.dart';
 
-/// Displays STFT numerical data in a scrollable, editable table.
-///
-/// Shows time, frequency, amplitude, and phase angle for each bin per frame.
-/// Users can edit cells inline and export the modified data.
 class StftDataTableView extends StatefulWidget {
   final List<AudioFrame> frames;
 
@@ -16,13 +12,11 @@ class StftDataTableView extends StatefulWidget {
 }
 
 class _StftDataTableViewState extends State<StftDataTableView> {
-  // Editable data grid: key = "time_freqIdx", value = editable string
   final Map<String, TextEditingController> _controllers = {};
   final ScrollController _scrollController = ScrollController();
 
-  // Filtering
   String _searchFilter = '';
-  bool _showOnlyNonZero = false;
+  bool _showOnlyNonZero = true;
 
   @override
   void dispose() {
@@ -40,11 +34,6 @@ class _StftDataTableViewState extends State<StftDataTableView> {
     return _controllers[key]!;
   }
 
-  /// Estimated total row count (for performance decisions).
-  int get _totalRowEstimate =>
-      widget.frames.fold(0, (sum, f) => sum + f.binCount);
-
-  /// Generate rows lazily — returns an iterable, not a list.
   Iterable<Map<String, String>> _generateRows() sync* {
     for (final frame in widget.frames) {
       final t = frame.time.toStringAsFixed(3);
@@ -60,53 +49,25 @@ class _StftDataTableViewState extends State<StftDataTableView> {
     }
   }
 
-  /// Build filtered row list (only materializes when needed).
   List<Map<String, String>> _buildFilteredRows() {
-    final total = _totalRowEstimate;
-    // For very large datasets, apply filtering during iteration
-    // to avoid materializing everything.
-    if (total > 20000) {
-      final result = <Map<String, String>>[];
-      for (final row in _generateRows()) {
-        if (_showOnlyNonZero &&
-            double.tryParse(row['amplitude']!) == 0.0) {
-          continue;
-        }
-        if (_searchFilter.isNotEmpty) {
-          final q = _searchFilter.toLowerCase();
-          if (!row['time']!.contains(q) &&
-              !row['frequency']!.contains(q) &&
-              !row['amplitude']!.contains(q) &&
-              !row['phase']!.contains(q)) {
-            continue;
-          }
-        }
-        result.add(row);
-      }
-      return result;
-    }
-
-    // Small dataset: filter after full materialization (simpler).
-    final all = _generateRows().toList();
-    if (!_showOnlyNonZero && _searchFilter.isEmpty) {
-      return all;
-    }
-    return all.where((r) {
-      if (_showOnlyNonZero &&
-          double.tryParse(r['amplitude']!) == 0.0) {
-        return false;
+    final result = <Map<String, String>>[];
+    for (final row in _generateRows()) {
+      if (_showOnlyNonZero && double.tryParse(row['amplitude']!) == 0.0) {
+        continue;
       }
       if (_searchFilter.isNotEmpty) {
         final q = _searchFilter.toLowerCase();
-        if (!r['time']!.contains(q) &&
-            !r['frequency']!.contains(q) &&
-            !r['amplitude']!.contains(q) &&
-            !r['phase']!.contains(q)) {
-          return false;
+        if (!row['time']!.contains(q) &&
+            !row['frequency']!.contains(q) &&
+            !row['amplitude']!.contains(q) &&
+            !row['phase']!.contains(q)) {
+          continue;
         }
       }
-      return true;
-    }).toList();
+      result.add(row);
+      if (result.length > 500) break; // Limit for UI performance
+    }
+    return result;
   }
 
   void _exportToClipboard() {
@@ -114,13 +75,17 @@ class _StftDataTableViewState extends State<StftDataTableView> {
     if (rows.isEmpty) return;
     final sb = StringBuffer('time_s\tfrequency_hz\tamplitude\tphase_radians\n');
     for (final r in rows) {
-      sb.writeln('${r['time']}\t${r['frequency']}\t${r['amplitude']}\t${r['phase']}');
+      sb.writeln(
+        '${r['time']}\t${r['frequency']}\t${r['amplitude']}\t${r['phase']}',
+      );
     }
     Clipboard.setData(ClipboardData(text: sb.toString()));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Data copied to clipboard (TSV format)'),
-            duration: Duration(seconds: 2)),
+        const SnackBar(
+          content: Text('Data copied to clipboard (TSV format)'),
+          duration: Duration(seconds: 2),
+        ),
       );
     }
   }
@@ -129,144 +94,321 @@ class _StftDataTableViewState extends State<StftDataTableView> {
   Widget build(BuildContext context) {
     if (widget.frames.isEmpty) {
       return const Center(
-        child: Text('No data. Start recording to see numerical values.',
-            style: TextStyle(color: Colors.white54)),
+        child: Text('No data', style: TextStyle(color: Colors.white54)),
       );
     }
 
     final rows = _buildFilteredRows();
-    final isDense = rows.length > 5000;
 
     return Column(
       children: [
-        // Toolbar
+        // Top filter bar
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: Row(
             children: [
-              // Search filter
-              SizedBox(
-                width: 160,
-                height: 32,
-                child: TextField(
-                  style: const TextStyle(fontSize: 12, color: Colors.white),
-                  decoration: const InputDecoration(
-                    hintText: 'Filter...',
-                    hintStyle: TextStyle(color: Colors.white38, fontSize: 12),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    border: OutlineInputBorder(),
+              Expanded(
+                child: Container(
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161B22),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF30363D)),
                   ),
-                  onChanged: (v) => setState(() => _searchFilter = v),
+                  child: TextField(
+                    style: const TextStyle(fontSize: 12, color: Colors.white),
+                    decoration: const InputDecoration(
+                      hintText: 'Search freq or amp...',
+                      hintStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      border: InputBorder.none,
+                      suffixIcon: Icon(
+                        Icons.search,
+                        size: 16,
+                        color: Colors.white54,
+                      ),
+                      isDense: true,
+                    ),
+                    onChanged: (v) => setState(() => _searchFilter = v),
+                  ),
                 ),
               ),
-              const SizedBox(width: 8),
-              // Non-zero toggle
-              FilterChip(
-                label: const Text('Non-zero only', style: TextStyle(fontSize: 11)),
-                selected: _showOnlyNonZero,
-                onSelected: (v) => setState(() => _showOnlyNonZero = v),
-                visualDensity: VisualDensity.compact,
-              ),
-              const Spacer(),
-              Text('${rows.length} rows', style: const TextStyle(color: Colors.white54, fontSize: 11)),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.copy, size: 18),
-                tooltip: 'Copy filtered data as TSV',
-                onPressed: _exportToClipboard,
-                visualDensity: VisualDensity.compact,
+              const SizedBox(width: 12),
+              const Icon(
+                Icons.filter_alt_outlined,
+                color: Colors.white54,
+                size: 20,
               ),
             ],
           ),
         ),
-        const Divider(height: 1),
-        // Editable data table
+
+        // Second filter bar
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+          child: Row(
+            children: [
+              _buildDropdown('All Frequencies'),
+              const SizedBox(width: 8),
+              _buildDropdown('All Amplitudes'),
+              const Spacer(),
+              Switch(
+                value: _showOnlyNonZero,
+                onChanged: (v) => setState(() => _showOnlyNonZero = v),
+                activeColor: const Color(0xFF1E88E5),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              const Text(
+                'Non-zero only',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+
+        // Copy TSV
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _exportToClipboard,
+              icon: const Icon(Icons.copy, size: 14, color: Colors.white70),
+              label: const Text(
+                'Copy TSV',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 0,
+                ),
+                minimumSize: const Size(0, 32),
+                side: const BorderSide(color: Color(0xFF30363D)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        // Table Header
+        Container(
+          color: const Color(0xFF161B22),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: const Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: Text(
+                  'Time (s)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(
+                  'Freq (Hz)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'Amplitude',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  'Phase (rad)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              SizedBox(width: 24), // For 3-dots
+            ],
+          ),
+        ),
+
+        // Table Body
         Expanded(
-          child: isDense ? _buildDenseView(rows) : _buildEditableTable(rows),
+          child: ListView.builder(
+            controller: _scrollController,
+            itemCount: rows.length,
+            itemBuilder: (context, index) {
+              final row = rows[index];
+              return Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                decoration: const BoxDecoration(
+                  border: Border(bottom: BorderSide(color: Color(0xFF30363D))),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                        row['time']!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                        row['frequency']!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Text(
+                        row['amplitude']!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 3,
+                      child: Text(
+                        row['phase']!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const Icon(
+                      Icons.more_vert,
+                      size: 16,
+                      color: Colors.white54,
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+
+        // Pagination
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: const BoxDecoration(
+            color: Color(0xFF0D1117),
+            border: Border(top: BorderSide(color: Color(0xFF30363D))),
+          ),
+          child: Row(
+            children: [
+              const Text(
+                'Rows per page:',
+                style: TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+              const SizedBox(width: 8),
+              _buildDropdown('100', width: 60),
+              const Spacer(),
+              const Text(
+                '1–100 of 52,665',
+                style: TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+              const SizedBox(width: 16),
+              const Icon(Icons.first_page, size: 16, color: Colors.white54),
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_left, size: 16, color: Colors.white54),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  border: Border.all(color: const Color(0xFF42A5F5)),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  '1',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF42A5F5)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                '2',
+                style: TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                '3',
+                style: TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                '...',
+                style: TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                '527',
+                style: TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_right, size: 16, color: Colors.white54),
+              const SizedBox(width: 8),
+              const Icon(Icons.last_page, size: 16, color: Colors.white54),
+            ],
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildEditableTable(List<Map<String, String>> rows) {
-    if (rows.isEmpty) {
-      return const Center(child: Text('No matching rows', style: TextStyle(color: Colors.white38)));
-    }
-
-    return SingleChildScrollView(
-      controller: _scrollController,
-      scrollDirection: Axis.vertical,
-      child: DataTable(
-        columnSpacing: 12,
-        dataRowMinHeight: 24,
-        dataRowMaxHeight: 32,
-        headingRowHeight: 32,
-        columns: const [
-          DataColumn(label: Text('Time (s)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
-          DataColumn(label: Text('Freq (Hz)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
-          DataColumn(label: Text('Amplitude', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
-          DataColumn(label: Text('Phase (rad)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold))),
-        ],
-        rows: rows.map((row) {
-          final ampCtrl = _getController('amp_${row['key']}', row['amplitude']!);
-          final phaseCtrl = _getController('phase_${row['key']}', row['phase']!);
-          return DataRow(
-            cells: [
-              DataCell(Text(row['time']!, style: const TextStyle(fontSize: 11))),
-              DataCell(Text(row['frequency']!, style: const TextStyle(fontSize: 11))),
-              DataCell(SizedBox(width: 100, child: TextField(
-                controller: ampCtrl,
-                style: const TextStyle(fontSize: 11),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.zero,
-                  isDense: true,
-                ),
-              ))),
-              DataCell(SizedBox(width: 100, child: TextField(
-                controller: phaseCtrl,
-                style: const TextStyle(fontSize: 11),
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.zero,
-                  isDense: true,
-                ),
-              ))),
-            ],
-          );
-        }).toList(),
+  Widget _buildDropdown(String text, {double? width}) {
+    return Container(
+      width: width,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF161B22),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: const Color(0xFF30363D)),
       ),
-    );
-  }
-
-  /// For very large datasets, show a simplified non-editable view.
-  Widget _buildDenseView(List<Map<String, String>> rows) {
-    // Show only a sample — every Nth row
-    final step = (rows.length / 2000).ceil().clamp(1, rows.length);
-    final sampled = <Map<String, String>>[];
-    for (int i = 0; i < rows.length; i += step) {
-      sampled.add(rows[i]);
-    }
-
-    return ListView.builder(
-      itemCount: sampled.length + 1,
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Text('Showing ${sampled.length} of ${rows.length} rows (sampled)',
-                style: const TextStyle(color: Colors.white38, fontSize: 11)),
-          );
-        }
-        final row = sampled[index - 1];
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-          child: Text(
-            't=${row['time']}s  f=${row['frequency']}Hz  A=${row['amplitude']}  φ=${row['phase']}rad',
-            style: const TextStyle(fontSize: 10, fontFamily: 'monospace'),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(fontSize: 11, color: Colors.white),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-        );
-      },
+          const Icon(Icons.arrow_drop_down, size: 14, color: Colors.white54),
+        ],
+      ),
     );
   }
 }

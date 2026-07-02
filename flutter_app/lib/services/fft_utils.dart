@@ -6,7 +6,8 @@ class FFTUtils {
   /// Compute real-input FFT.
   /// Returns (magnitudes, phases) for bins 0..N/2 (N/2+1 bins).
   static (Float64List magnitudes, Float64List phases) computeRFFT(
-      Float64List samples) {
+    Float64List samples,
+  ) {
     final int n = samples.length;
     assert((n & (n - 1)) == 0, 'Length must be power of 2');
 

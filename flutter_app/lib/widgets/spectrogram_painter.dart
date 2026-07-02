@@ -3,17 +3,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/audio_frame.dart';
 
-/// Renders a rolling spectrogram (frequency vs time heatmap).
+/// Renders a scrollable film-strip spectrogram (frequency vs time heatmap).
 ///
-/// Each column is one STFT frame. Magnitudes are converted to dB and
-/// mapped through an "inferno-like" color gradient.
+/// Each column is one STFT frame at a fixed pixel width ([frameWidth]).
+/// Only frames visible within the viewport are painted — the rest are skipped.
+/// Use [scrollOffset] (in pixels) to pan through history.
 class SpectrogramPainter extends CustomPainter {
   final List<AudioFrame> frames;
   final double maxDisplayFreq; // Hz — clip display above this
+  final double scrollOffset; // pixels from left
+  final double frameWidth; // fixed pixels per STFT frame column
 
   SpectrogramPainter({
     required this.frames,
     this.maxDisplayFreq = 8000,
+    this.scrollOffset = 0,
+    this.frameWidth = 3.0,
   });
 
   // Pre-built color lookup table (256 entries, inferno-like)
@@ -58,7 +63,6 @@ class SpectrogramPainter extends CustomPainter {
     }
 
     final numFrames = frames.length;
-    if (numFrames == 0) return;
 
     // Determine which frequency bins to show (up to maxDisplayFreq)
     final freqs = frames.first.frequencies;
@@ -72,13 +76,21 @@ class SpectrogramPainter extends CustomPainter {
     maxBin = maxBin.clamp(1, freqs.length - 1);
     final binCount = maxBin + 1;
 
-    final cellW = size.width / numFrames;
+    // ── Determine which frames are visible in the viewport ──
+    final firstCol = (scrollOffset / frameWidth).floor();
+    final lastCol = ((scrollOffset + size.width) / frameWidth).ceil();
+    final startCol = firstCol.clamp(0, numFrames - 1);
+    final endCol = lastCol.clamp(startCol + 1, numFrames);
+    final visibleCount = endCol - startCol;
+    if (visibleCount <= 0) return;
+
     final cellH = size.height / binCount;
 
-    // Compute dB range across visible frames for dynamic range
+    // ── Compute dB range across visible frames ──
     double minDb = double.infinity;
     double maxDb = double.negativeInfinity;
-    for (final frame in frames) {
+    for (int col = startCol; col < endCol; col++) {
+      final frame = frames[col];
       for (int i = 0; i <= maxBin && i < frame.magnitudes.length; i++) {
         final db = _toDb(frame.magnitudes[i]);
         if (db.isFinite) {
@@ -96,35 +108,43 @@ class SpectrogramPainter extends CustomPainter {
       minDb = maxDb - 60;
     }
 
-    // Draw column by column
-    for (int col = 0; col < numFrames; col++) {
+    // ── Draw visible frames ──
+    for (int col = startCol; col < endCol; col++) {
       final frame = frames[col];
-      final x = col * cellW;
+      final x = col * frameWidth - scrollOffset;
       final mags = frame.magnitudes;
 
       for (int row = 0; row <= maxBin && row < mags.length; row++) {
         final db = _toDb(mags[row]);
-        final norm = db.isFinite ? ((db - minDb) / (maxDb - minDb)).clamp(0.0, 1.0) : 0.0;
+        final norm = db.isFinite
+            ? ((db - minDb) / (maxDb - minDb)).clamp(0.0, 1.0)
+            : 0.0;
         final colorIdx = (norm * 255).round().clamp(0, 255);
         final r = _colorLut[colorIdx * 4] / 255.0;
         final g = _colorLut[colorIdx * 4 + 1] / 255.0;
         final b = _colorLut[colorIdx * 4 + 2] / 255.0;
 
-        final paint = Paint()..color = Color.fromRGBO(
-          (r * 255).round(),
-          (g * 255).round(),
-          (b * 255).round(),
-          1.0,
-        );
+        final paint = Paint()
+          ..color = Color.fromRGBO(
+            (r * 255).round(),
+            (g * 255).round(),
+            (b * 255).round(),
+            1.0,
+          );
         canvas.drawRect(
-          Rect.fromLTWH(x, size.height - (row + 1) * cellH, cellW + 0.5, cellH + 0.5),
+          Rect.fromLTWH(
+            x,
+            size.height - (row + 1) * cellH,
+            frameWidth + 0.5,
+            cellH + 0.5,
+          ),
           paint,
         );
       }
     }
 
-    // Draw axis labels
-    _drawAxes(canvas, size, binCount, freqs, numFrames);
+    // ── Draw axis labels ──
+    _drawAxes(canvas, size, binCount, freqs);
   }
 
   double _toDb(double magnitude) {
@@ -142,11 +162,16 @@ class SpectrogramPainter extends CustomPainter {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    tp.paint(canvas, Offset((size.width - tp.width) / 2, (size.height - tp.height) / 2));
+    tp.paint(
+      canvas,
+      Offset((size.width - tp.width) / 2, (size.height - tp.height) / 2),
+    );
   }
 
-  void _drawAxes(Canvas canvas, Size size, int binCount, List<double> freqs, int numFrames) {
-    // Frequency axis labels (left side)
+  void _drawAxes(Canvas canvas, Size size, int binCount, List<double> freqs) {
+    final numFrames = frames.length;
+
+    // ── Frequency axis labels (left side) ──
     final labelCount = 5;
     for (int i = 0; i <= labelCount; i++) {
       final binIdx = (binCount * i / labelCount).round().clamp(0, binCount - 1);
@@ -162,12 +187,21 @@ class SpectrogramPainter extends CustomPainter {
       tp.paint(canvas, Offset(2, y - tp.height / 2));
     }
 
-    // Time axis labels (top or bottom)
-    final timeLabels = 6;
-    for (int i = 0; i <= timeLabels; i++) {
-      final frameIdx = (numFrames * i / timeLabels).round().clamp(0, numFrames - 1);
-      final time = frames.isNotEmpty ? frames[frameIdx].time : 0.0;
-      final x = frameIdx * (size.width / max(numFrames, 1));
+    // ── Time axis labels (bottom) — only for visible frames ──
+    final firstCol = (scrollOffset / frameWidth).floor().clamp(0, numFrames - 1);
+    final lastCol =
+        ((scrollOffset + size.width) / frameWidth).ceil().clamp(firstCol + 1, numFrames);
+    final visibleCount = lastCol - firstCol;
+    if (visibleCount <= 0) return;
+
+    final nTimeLabels = min(6, visibleCount);
+    for (int i = 0; i <= nTimeLabels; i++) {
+      final frameIdx = firstCol + (visibleCount * i / nTimeLabels).round();
+      if (frameIdx >= numFrames) continue;
+      final time = frames[frameIdx].time;
+      final x = frameIdx * frameWidth - scrollOffset;
+      // Skip labels outside visible area
+      if (x < -10 || x > size.width + 10) continue;
       final tp = TextPainter(
         text: TextSpan(
           text: '${time.toStringAsFixed(1)}s',
@@ -181,17 +215,28 @@ class SpectrogramPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(SpectrogramPainter oldDelegate) =>
-      oldDelegate.frames != frames || oldDelegate.frames.length != frames.length;
+      oldDelegate.frames != frames ||
+      oldDelegate.frames.length != frames.length ||
+      oldDelegate.scrollOffset != scrollOffset ||
+      oldDelegate.frameWidth != frameWidth;
 }
 
-/// Renders a phase-angle colormap (rolling).
+/// Renders a scrollable film-strip phase-angle colormap.
 ///
 /// Phase is mapped to a cyclic hue (HSV) so that -π = π = same color.
+/// Only visible frames are painted. Scrollable via [scrollOffset].
 class PhasePainter extends CustomPainter {
   final List<AudioFrame> frames;
   final double maxDisplayFreq;
+  final double scrollOffset;
+  final double frameWidth;
 
-  PhasePainter({required this.frames, this.maxDisplayFreq = 8000});
+  PhasePainter({
+    required this.frames,
+    this.maxDisplayFreq = 8000,
+    this.scrollOffset = 0,
+    this.frameWidth = 3.0,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -212,12 +257,20 @@ class PhasePainter extends CustomPainter {
     maxBin = maxBin.clamp(1, freqs.length - 1);
     final binCount = maxBin + 1;
 
-    final cellW = size.width / numFrames;
+    // ── Determine visible frames ──
+    final firstCol = (scrollOffset / frameWidth).floor();
+    final lastCol = ((scrollOffset + size.width) / frameWidth).ceil();
+    final startCol = firstCol.clamp(0, numFrames - 1);
+    final endCol = lastCol.clamp(startCol + 1, numFrames);
+    final visibleCount = endCol - startCol;
+    if (visibleCount <= 0) return;
+
     final cellH = size.height / binCount;
 
-    for (int col = 0; col < numFrames; col++) {
+    // ── Draw visible frames ──
+    for (int col = startCol; col < endCol; col++) {
       final frame = frames[col];
-      final x = col * cellW;
+      final x = col * frameWidth - scrollOffset;
       final phases = frame.phases;
 
       for (int row = 0; row <= maxBin && row < phases.length; row++) {
@@ -227,45 +280,75 @@ class PhasePainter extends CustomPainter {
         final color = HSVColor.fromAHSV(1.0, hue, 0.9, 0.9).toColor();
 
         canvas.drawRect(
-          Rect.fromLTWH(x, size.height - (row + 1) * cellH, cellW + 0.5, cellH + 0.5),
+          Rect.fromLTWH(
+            x,
+            size.height - (row + 1) * cellH,
+            frameWidth + 0.5,
+            cellH + 0.5,
+          ),
           Paint()..color = color,
         );
       }
     }
 
-    // Axis labels
-    _drawAxes(canvas, size, binCount, freqs, numFrames);
+    // ── Axis labels ──
+    _drawAxes(canvas, size, binCount, freqs);
   }
 
   void _drawPlaceholder(Canvas canvas, Size size, String text) {
     final paint = Paint()..color = Colors.white24;
     canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
     final tp = TextPainter(
-      text: TextSpan(text: text, style: const TextStyle(color: Colors.white54, fontSize: 16)),
+      text: TextSpan(
+        text: text,
+        style: const TextStyle(color: Colors.white54, fontSize: 16),
+      ),
       textDirection: TextDirection.ltr,
     )..layout();
-    tp.paint(canvas, Offset((size.width - tp.width) / 2, (size.height - tp.height) / 2));
+    tp.paint(
+      canvas,
+      Offset((size.width - tp.width) / 2, (size.height - tp.height) / 2),
+    );
   }
 
-  void _drawAxes(Canvas canvas, Size size, int binCount, List<double> freqs, int numFrames) {
+  void _drawAxes(Canvas canvas, Size size, int binCount, List<double> freqs) {
+    final numFrames = frames.length;
+
+    // ── Frequency labels ──
     final labelCount = 4;
     for (int i = 0; i <= labelCount; i++) {
       final binIdx = (binCount * i / labelCount).round().clamp(0, binCount - 1);
       final freq = freqs[binIdx];
       final y = size.height - (binIdx + 0.5) * (size.height / binCount);
       final tp = TextPainter(
-        text: TextSpan(text: '${freq.round()} Hz', style: const TextStyle(color: Colors.white60, fontSize: 9)),
+        text: TextSpan(
+          text: '${freq.round()} Hz',
+          style: const TextStyle(color: Colors.white60, fontSize: 9),
+        ),
         textDirection: TextDirection.ltr,
       )..layout();
       tp.paint(canvas, Offset(2, y - tp.height / 2));
     }
 
-    for (int i = 0; i <= 4; i++) {
-      final frameIdx = (numFrames * i / 4).round().clamp(0, numFrames - 1);
-      final time = frames.isNotEmpty ? frames[frameIdx].time : 0.0;
-      final x = frameIdx * (size.width / max(numFrames, 1));
+    // ── Time labels (visible frames only) ──
+    final firstCol = (scrollOffset / frameWidth).floor().clamp(0, numFrames - 1);
+    final lastCol =
+        ((scrollOffset + size.width) / frameWidth).ceil().clamp(firstCol + 1, numFrames);
+    final visibleCount = lastCol - firstCol;
+    if (visibleCount <= 0) return;
+
+    final nTimeLabels = min(4, visibleCount);
+    for (int i = 0; i <= nTimeLabels; i++) {
+      final frameIdx = firstCol + (visibleCount * i / nTimeLabels).round();
+      if (frameIdx >= numFrames) continue;
+      final time = frames[frameIdx].time;
+      final x = frameIdx * frameWidth - scrollOffset;
+      if (x < -10 || x > size.width + 10) continue;
       final tp = TextPainter(
-        text: TextSpan(text: '${time.toStringAsFixed(1)}s', style: const TextStyle(color: Colors.white60, fontSize: 9)),
+        text: TextSpan(
+          text: '${time.toStringAsFixed(1)}s',
+          style: const TextStyle(color: Colors.white60, fontSize: 9),
+        ),
         textDirection: TextDirection.ltr,
       )..layout();
       tp.paint(canvas, Offset(x - tp.width / 2, size.height - 14));
@@ -274,5 +357,8 @@ class PhasePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(PhasePainter oldDelegate) =>
-      oldDelegate.frames != frames || oldDelegate.frames.length != frames.length;
+      oldDelegate.frames != frames ||
+      oldDelegate.frames.length != frames.length ||
+      oldDelegate.scrollOffset != scrollOffset ||
+      oldDelegate.frameWidth != frameWidth;
 }

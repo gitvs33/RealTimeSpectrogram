@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/spectrogram_service.dart';
@@ -8,9 +9,7 @@ import 'widgets/saved_recordings_view.dart';
 void main() {
   runApp(
     ChangeNotifierProvider(
-      create: (_) => SpectrogramService(
-        mode: SpectrogramService.detectDefaultMode(),
-      ),
+      create: (_) => SpectrogramService()..startLivePreview(),
       child: const SpectrogramApp(),
     ),
   );
@@ -27,9 +26,13 @@ class SpectrogramApp extends StatelessWidget {
       theme: ThemeData.dark(useMaterial3: true).copyWith(
         colorScheme: ColorScheme.fromSeed(
           brightness: Brightness.dark,
-          seedColor: Colors.teal,
+          seedColor: const Color(
+            0xFF1E88E5,
+          ), // Using a blue accent like the mockup
         ),
-        scaffoldBackgroundColor: const Color(0xFF0D1117),
+        scaffoldBackgroundColor: const Color(
+          0xFF0D1117,
+        ), // very dark background
       ),
       home: const SpectrogramHome(),
     );
@@ -44,108 +47,84 @@ class SpectrogramHome extends StatefulWidget {
 }
 
 class _SpectrogramHomeState extends State<SpectrogramHome> {
-  final TextEditingController _hostCtrl = TextEditingController(text: 'localhost');
-  final TextEditingController _portCtrl = TextEditingController(text: '8765');
-  final TextEditingController _filenameCtrl = TextEditingController(text: 'recording');
+  final TextEditingController _filenameCtrl = TextEditingController(text: '');
   int _selectedTab = 0; // 0=spectrogram, 1=phase, 2=data, 3=saved
 
-  @override
-  void initState() {
-    super.initState();
-    // Auto-connect on start
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _connect();
-    });
-  }
+  // Film-strip scrolling offsets
+  double _spectrogramScrollOffset = 0;
+  double _phaseScrollOffset = 0;
 
   @override
   void dispose() {
-    _hostCtrl.dispose();
-    _portCtrl.dispose();
     _filenameCtrl.dispose();
     super.dispose();
-  }
-
-  void _connect() {
-    final svc = context.read<SpectrogramService>();
-    if (svc.mode == AudioMode.local) {
-      // Local mode doesn't need a WebSocket connection.
-      // The mic starts on startLivePreview / startRecording.
-      return;
-    }
-    final host = _hostCtrl.text.trim();
-    final port = int.tryParse(_portCtrl.text.trim()) ?? 8765;
-    svc.connect(host, port);
-    // Start listening after connecting
-    Future.delayed(const Duration(milliseconds: 100), () {
-      svc.startListening();
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Real-Time Spectrogram',
-            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18)),
+        backgroundColor: const Color(0xFF0D1117),
+        elevation: 0,
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu, color: Colors.white),
+            onPressed: () => Scaffold.of(context).openDrawer(),
+          ),
+        ),
+        title: const Text(
+          'Real-Time Spectrogram',
+          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+        ),
         centerTitle: false,
         actions: [
           Consumer<SpectrogramService>(
             builder: (context, svc, _) => Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Connection indicator
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: svc.isConnected
-                              ? Colors.greenAccent
-                              : Colors.redAccent,
-                          boxShadow: [
-                            BoxShadow(
-                              color: (svc.isConnected
-                                      ? Colors.greenAccent
-                                      : Colors.redAccent)
-                                  .withAlpha(100),
-                              blurRadius: 6,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        svc.mode == AudioMode.local
-                            ? 'Device Mic'
-                            : (svc.isConnected
-                                ? 'Connected'
-                                : 'Disconnected'),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: svc.isConnected
-                              ? Colors.greenAccent
-                              : Colors.redAccent,
-                        ),
-                      ),
-                    ],
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.greenAccent,
                   ),
                 ),
-                // Settings (network mode only)
-                if (svc.mode == AudioMode.network)
-                  IconButton(
-                    icon: const Icon(Icons.settings, size: 20),
-                    onPressed: _showSettings,
+                const SizedBox(width: 6),
+                const Text(
+                  'Device Mic',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.greenAccent,
+                    fontWeight: FontWeight.w500,
                   ),
+                ),
               ],
             ),
           ),
+          const SizedBox(width: 16),
+          IconButton(
+            icon: const Icon(Icons.settings, color: Colors.white, size: 20),
+            onPressed: () {
+              // Settings dummy
+            },
+          ),
         ],
+      ),
+      drawer: const Drawer(
+        backgroundColor: Color(0xFF161B22),
+        child: SafeArea(
+          child: Column(
+            children: [
+              ListTile(
+                title: Text(
+                  'Real-Time Spectrogram',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
       body: Consumer<SpectrogramService>(
         builder: (context, svc, _) {
@@ -153,33 +132,31 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
             children: [
               // ── Tab bar ──
               Container(
-                color: const Color(0xFF161B22),
+                color: const Color(0xFF0D1117),
                 child: Row(
                   children: [
-                    _tabButton('Spectrogram', 0),
-                    _tabButton('Phase View', 1),
-                    _tabButton('Numerical Data', 2),
-                    _tabButton('Saved', 3),
+                    _tabButton('Spectrogram', Icons.bar_chart, 0),
+                    _tabButton('Phase View', Icons.data_usage, 1),
+                    _tabButton('Numerical Data', Icons.list, 2),
+                    _tabButton('Saved', Icons.folder, 3),
                   ],
                 ),
               ),
+              const Divider(height: 1, color: Color(0xFF30363D)),
 
               // ── Main visualization ──
               Expanded(
                 child: _selectedTab == 0
                     ? _buildSpectrogramView(svc)
                     : _selectedTab == 1
-                        ? _buildPhaseView(svc)
-                        : _selectedTab == 2
-                            ? _buildDataView(svc)
-                            : _buildSavedRecordingsView(),
+                    ? _buildPhaseView(svc)
+                    : _selectedTab == 2
+                    ? _buildDataView(svc)
+                    : _buildSavedRecordingsView(),
               ),
 
               // ── Control panel ──
               _buildControlPanel(svc),
-
-              // ── Status bar ──
-              _buildStatusBar(svc),
             ],
           );
         },
@@ -187,163 +164,159 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
     );
   }
 
-  Widget _tabButton(String label, int index) {
+  Widget _tabButton(String label, IconData icon, int index) {
     final isSelected = _selectedTab == index;
+    final color = isSelected
+        ? const Color(0xFF42A5F5)
+        : Colors.white54; // Blue for selected, grey for unselected
     return Expanded(
       child: GestureDetector(
         onTap: () => setState(() => _selectedTab = index),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
-                color: isSelected ? Colors.teal : Colors.transparent,
+                color: isSelected
+                    ? const Color(0xFF42A5F5)
+                    : Colors.transparent,
                 width: 2,
               ),
             ),
           ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-              color: isSelected ? Colors.tealAccent : Colors.white54,
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 20, color: color),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                  color: color,
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  // ── Spectrogram ──
+  // ── Spectrogram (scrollable film-strip) ──
   Widget _buildSpectrogramView(SpectrogramService svc) {
-    if (!svc.livePreviewActive) {
+    if (!svc.livePreviewActive && svc.recordedFrames.isEmpty) {
+      _spectrogramScrollOffset = 0;
       return _buildPreviewPrompt(svc, isPhase: false);
     }
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
-          child: Row(
-            children: [
-              Icon(Icons.graphic_eq, size: 14, color: Colors.tealAccent),
-              const SizedBox(width: 4),
-              const Text('Frequency Spectrogram (magnitude, dB scale)',
-                  style: TextStyle(fontSize: 11, color: Colors.white54)),
-              const Spacer(),
-              // Recording badge / Stop Preview
-              if (svc.isRecording)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.redAccent.withAlpha(40),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.redAccent, width: 0.5),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.fiber_manual_record, size: 8, color: Colors.redAccent),
-                      SizedBox(width: 4),
-                      Text('RECORDING',
-                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: Colors.redAccent)),
-                    ],
-                  ),
-                )
-              else
-                GestureDetector(
-                  onTap: () => svc.stopLivePreview(),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withAlpha(30),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.orange, width: 0.5),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.stop, size: 10, color: Colors.orange),
-                        SizedBox(width: 3),
-                        Text('Stop Preview',
-                            style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: Colors.orange)),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(40, 0, 8, 16),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: CustomPaint(
-                painter: SpectrogramPainter(frames: svc.liveFrames),
-                size: Size.infinite,
-              ),
+
+    const frameWidth = 3.0; // fixed pixels per STFT frame column
+    final displayFrames = svc.recordedFrames.isNotEmpty
+        ? svc.recordedFrames
+        : svc.liveFrames;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(40, 16, 8, 16),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final viewportW = constraints.maxWidth;
+          final totalW =
+              max(viewportW, displayFrames.length * frameWidth);
+          final maxScroll = max(0.0, totalW - viewportW);
+
+          // Auto-scroll to latest during recording/preview
+          if (svc.isRecording || svc.livePreviewActive) {
+            _spectrogramScrollOffset = maxScroll;
+          } else {
+            _spectrogramScrollOffset =
+                _spectrogramScrollOffset.clamp(0.0, maxScroll);
+          }
+
+          return _buildFilmStrip(
+            painter: SpectrogramPainter(
+              frames: displayFrames,
+              scrollOffset: _spectrogramScrollOffset,
+              frameWidth: frameWidth,
             ),
-          ),
-        ),
-      ],
+            onDrag: (dx) {
+              if (!svc.isRecording && !svc.livePreviewActive) {
+                setState(() {
+                  _spectrogramScrollOffset =
+                      (_spectrogramScrollOffset - dx)
+                          .clamp(0.0, maxScroll);
+                });
+              }
+            },
+          );
+        },
+      ),
     );
   }
 
-  // ── Phase View ──
+  // ── Phase View (scrollable film-strip) ──
   Widget _buildPhaseView(SpectrogramService svc) {
-    if (!svc.livePreviewActive) {
+    if (!svc.livePreviewActive && svc.recordedFrames.isEmpty) {
+      _phaseScrollOffset = 0;
       return _buildPreviewPrompt(svc, isPhase: true);
     }
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
-          child: Row(
-            children: [
-              Icon(Icons.loop, size: 14, color: Colors.purpleAccent),
-              const SizedBox(width: 4),
-              const Text('Phase Angle (hue = phase, cyclic colormap)',
-                  style: TextStyle(fontSize: 11, color: Colors.white54)),
-              const Spacer(),
-              // Stop Preview button
-              GestureDetector(
-                onTap: () => svc.stopLivePreview(),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withAlpha(30),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: Colors.orange, width: 0.5),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.stop, size: 10, color: Colors.orange),
-                      SizedBox(width: 3),
-                      Text('Stop Preview',
-                          style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: Colors.orange)),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(40, 0, 8, 16),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: CustomPaint(
-                painter: PhasePainter(frames: svc.liveFrames),
-                size: Size.infinite,
-              ),
+
+    const frameWidth = 3.0;
+    final displayFrames = svc.recordedFrames.isNotEmpty
+        ? svc.recordedFrames
+        : svc.liveFrames;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(40, 16, 8, 16),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final viewportW = constraints.maxWidth;
+          final totalW =
+              max(viewportW, displayFrames.length * frameWidth);
+          final maxScroll = max(0.0, totalW - viewportW);
+
+          if (svc.isRecording || svc.livePreviewActive) {
+            _phaseScrollOffset = maxScroll;
+          } else {
+            _phaseScrollOffset =
+                _phaseScrollOffset.clamp(0.0, maxScroll);
+          }
+
+          return _buildFilmStrip(
+            painter: PhasePainter(
+              frames: displayFrames,
+              scrollOffset: _phaseScrollOffset,
+              frameWidth: frameWidth,
             ),
-          ),
+            onDrag: (dx) {
+              if (!svc.isRecording && !svc.livePreviewActive) {
+                setState(() {
+                  _phaseScrollOffset =
+                      (_phaseScrollOffset - dx)
+                          .clamp(0.0, maxScroll);
+                });
+              }
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  /// Shared film-strip wrapper: GestureDetector + ClipRect + CustomPaint
+  Widget _buildFilmStrip({
+    required CustomPainter painter,
+    required void Function(double dx) onDrag,
+  }) {
+    return GestureDetector(
+      onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
+      child: ClipRect(
+        child: CustomPaint(
+          painter: painter,
+          size: Size.infinite,
         ),
-      ],
+      ),
     );
   }
 
@@ -354,8 +327,10 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
         : svc.liveFrames;
     if (displayFrames.isEmpty) {
       return const Center(
-        child: Text('No data. Start recording to see numerical values.',
-            style: TextStyle(color: Colors.white38)),
+        child: Text(
+          'No data. Start recording to see numerical values.',
+          style: TextStyle(color: Colors.white38),
+        ),
       );
     }
     return StftDataTableView(frames: displayFrames);
@@ -369,63 +344,197 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
   // ── Controls ──
   Widget _buildControlPanel(SpectrogramService svc) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: const BoxDecoration(
-        color: Color(0xFF161B22),
-        border: Border(top: BorderSide(color: Color(0xFF30363D))),
-      ),
-      child: Row(
+      color: const Color(0xFF0D1117),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Record button
-          _controlButton(
-            icon: svc.isRecording ? Icons.stop_circle_outlined : Icons.fiber_manual_record,
-            label: svc.isRecording ? 'Stop' : 'Record',
-            color: svc.isRecording ? Colors.orange : Colors.redAccent,
-            onPressed: () {
-              if (svc.isRecording) {
-                svc.stopRecording();
-              } else {
-                svc.startRecording();
-              }
-            },
-          ),
-          const SizedBox(width: 8),
-          // Save button
-          _controlButton(
-            icon: Icons.save_alt,
-            label: 'Save',
-            color: Colors.tealAccent,
-            onPressed: svc.recordedFrameCount > 0
-                ? () async {
-                    final name = _filenameCtrl.text.trim().isEmpty
-                        ? 'recording'
-                        : _filenameCtrl.text.trim();
-                    await svc.saveRecording(name);
-                  }
-                : null,
-          ),
-          const SizedBox(width: 8),
-          // Filename field
-          SizedBox(
-            width: 140,
-            child: TextField(
-              controller: _filenameCtrl,
-              style: const TextStyle(fontSize: 12, color: Colors.white),
-              decoration: const InputDecoration(
-                hintText: 'filename',
-                hintStyle: TextStyle(color: Colors.white24, fontSize: 12),
-                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
+          // Buttons and Inputs Row
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: 12.0,
+            ),
+            child: Row(
+              children: [
+                // Record
+                GestureDetector(
+                  onTap: () {
+                    if (!svc.isRecording) svc.startRecording();
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF161B22),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF30363D)),
+                        ),
+                        child: Container(
+                          width: 16,
+                          height: 16,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Record',
+                        style: TextStyle(fontSize: 10, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Stop
+                GestureDetector(
+                  onTap: () {
+                    if (svc.isRecording) svc.stopRecording();
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF161B22),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF30363D)),
+                        ),
+                        child: Container(
+                          width: 14,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: Colors.grey,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Stop',
+                        style: TextStyle(fontSize: 10, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                // Filename Input
+                Container(
+                  width: 140,
+                  height: 40,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161B22),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFF30363D)),
+                  ),
+                  child: TextField(
+                    controller: _filenameCtrl,
+                    style: const TextStyle(fontSize: 12, color: Colors.white),
+                    decoration: const InputDecoration(
+                      hintText: 'Enter filename...',
+                      hintStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 12,
+                      ),
+                      border: InputBorder.none,
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Save Button
+                Container(
+                  height: 40,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  child: ElevatedButton.icon(
+                    onPressed: svc.recordedFrameCount > 0
+                        ? () async {
+                            final name = _filenameCtrl.text.trim().isEmpty
+                                ? 'recording'
+                                : _filenameCtrl.text.trim();
+                            await svc.saveRecording(name);
+                            _filenameCtrl.clear();
+                          }
+                        : null,
+                    icon: const Icon(Icons.save, size: 16, color: Colors.white),
+                    label: const Text(
+                      'Save',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E88E5), // Blue accent
+                      disabledBackgroundColor: const Color(
+                        0xFF1E88E5,
+                      ).withOpacity(0.3),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          const Spacer(),
-          // Frame count
-          Text(
-            '${svc.recordedFrameCount} frames  ·  ${svc.recordingDuration.toStringAsFixed(1)}s',
-            style: const TextStyle(color: Colors.white38, fontSize: 11),
+
+          // Frames and Duration display
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 32.0,
+              vertical: 8.0,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Column(
+                  children: [
+                    const Text(
+                      'Frames',
+                      style: TextStyle(fontSize: 12, color: Colors.white54),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${svc.recordedFrames.isNotEmpty ? svc.recordedFrameCount : svc.liveFrames.length}',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                Container(width: 1, height: 30, color: const Color(0xFF30363D)),
+                Column(
+                  children: [
+                    const Text(
+                      'Duration',
+                      style: TextStyle(fontSize: 12, color: Colors.white54),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${(svc.recordedFrames.isNotEmpty ? svc.recordingDuration : 0.0).toStringAsFixed(2)} s',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
+
+          const SizedBox(height: 16),
+
+          // Status bar
+          _buildStatusBar(svc),
         ],
       ),
     );
@@ -434,51 +543,52 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
   // ── Status Bar ──
   Widget _buildStatusBar(SpectrogramService svc) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
-        color: Color(0xFF0D1117),
-        border: Border(top: BorderSide(color: Color(0xFF30363D))),
+        color: Color(0xFF0D1117), // very dark
+        border: Border(
+          top: BorderSide(color: Color(0xFF30363D)),
+        ), // subtle separator
       ),
       child: Row(
         children: [
-          // Recording indicator
-          if (svc.isRecording) ...[
-            Container(
-              width: 8, height: 8,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.redAccent,
-              ),
+          // REC indicator
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: svc.isRecording ? Colors.redAccent : Colors.grey,
             ),
-            const SizedBox(width: 4),
-            const Text('REC', style: TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold)),
-            const SizedBox(width: 12),
-          ],
-          // Live frame rate
-          Text(
-            'Live: ${svc.liveFrames.length} frames',
-            style: const TextStyle(color: Colors.white38, fontSize: 10),
           ),
-          if (svc.connectionError.isNotEmpty) ...[
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                svc.connectionError,
-                style: const TextStyle(color: Colors.orangeAccent, fontSize: 10),
-                overflow: TextOverflow.ellipsis,
-              ),
+          const SizedBox(width: 6),
+          Text(
+            'REC ${svc.isRecording ? svc.formattedDuration : "00:00:00"}',
+            style: TextStyle(
+              color: svc.isRecording ? Colors.redAccent : Colors.grey,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
             ),
-          ],
-          if (svc.saveMessage.isNotEmpty) ...[
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                svc.saveMessage,
-                style: const TextStyle(color: Colors.greenAccent, fontSize: 10),
-                overflow: TextOverflow.ellipsis,
-              ),
+          ),
+          const Spacer(),
+          // Live frames
+          Text(
+            'Live Frames: ${svc.liveFrames.length}',
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          const Spacer(),
+          // Live preview active
+          Text(
+            svc.livePreviewActive
+                ? 'Live preview active'
+                : 'Live preview inactive',
+            style: TextStyle(
+              color: svc.livePreviewActive
+                  ? Colors.greenAccent
+                  : Colors.white38,
+              fontSize: 12,
             ),
-          ],
+          ),
         ],
       ),
     );
@@ -491,7 +601,7 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isPhase ? Icons.loop : Icons.graphic_eq,
+            isPhase ? Icons.data_usage : Icons.bar_chart,
             size: 48,
             color: Colors.white24,
           ),
@@ -515,94 +625,11 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
             icon: const Icon(Icons.play_circle_outline, size: 20),
             label: const Text('Start Preview'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.tealAccent.withAlpha(30),
-              foregroundColor: Colors.tealAccent,
-              side: const BorderSide(color: Colors.tealAccent, width: 0.5),
+              backgroundColor: const Color(0xFF42A5F5).withOpacity(0.2),
+              foregroundColor: const Color(0xFF42A5F5),
+              side: const BorderSide(color: Color(0xFF42A5F5), width: 0.5),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Helper: control button ──
-  Widget _controlButton({
-    required IconData icon,
-    required String label,
-    required Color color,
-    VoidCallback? onPressed,
-  }) {
-    return Opacity(
-      opacity: onPressed != null ? 1.0 : 0.4,
-      child: Material(
-        color: color.withAlpha(30),
-        borderRadius: BorderRadius.circular(6),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(6),
-          onTap: onPressed,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 16, color: color),
-                const SizedBox(width: 4),
-                Text(label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: color,
-                    )),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ── Settings dialog ──
-  void _showSettings() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF161B22),
-        title: const Text('Connection Settings'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _hostCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Host',
-                hintText: 'localhost',
-              ),
-              style: const TextStyle(color: Colors.white),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _portCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Port',
-                hintText: '8765',
-              ),
-              keyboardType: TextInputType.number,
-              style: const TextStyle(color: Colors.white),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _connect();
-            },
-            child: const Text('Reconnect'),
           ),
         ],
       ),

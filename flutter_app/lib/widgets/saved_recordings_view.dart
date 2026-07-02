@@ -5,61 +5,20 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import '../services/spectrogram_service.dart';
 
-/// A group of files that belong to one recording save.
-class SavedRecording {
-  final String name;
-  final DateTime lastModified;
-  final String directory;
-  final List<FileSystemEntity> files;
-
-  SavedRecording({
-    required this.name,
-    required this.lastModified,
-    required this.directory,
-    required this.files,
-  });
-
-  File? get wavFile => files.cast<File?>().firstWhere(
-        (f) => f?.path.endsWith('.wav') ?? false,
-        orElse: () => null,
-      );
-
-  File? get csvFile => files.cast<File?>().firstWhere(
-        (f) => f?.path.endsWith('.csv') ?? false,
-        orElse: () => null,
-      );
-
-  File? get jsonFile => files.cast<File?>().firstWhere(
-        (f) => f?.path.endsWith('.json') ?? false,
-        orElse: () => null,
-      );
-
-  File? get pngFile => files.cast<File?>().firstWhere(
-        (f) => f?.path.endsWith('.png') ?? false,
-        orElse: () => null,
-      );
-
-  String get sizeStr {
-    int total = 0;
-    for (final f in files) {
-      if (f is File) total += f.lengthSync();
-    }
-    if (total < 1024) return '$total B';
-    if (total < 1024 * 1024) return '${(total / 1024).toStringAsFixed(1)} KB';
-    return '${(total / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-}
-
-/// Model for a single file entry in the saved recordings list.
 class _FileEntry {
-  final String name; // e.g. "myrecording"
+  final String name;
   final DateTime date;
   final List<File> files;
+  final String durationStr;
 
-  _FileEntry({required this.name, required this.date, required this.files});
+  _FileEntry({
+    required this.name,
+    required this.date,
+    required this.files,
+    this.durationStr = '00:00:00',
+  });
 }
 
-/// Tab that lists previously saved recordings and their files.
 class SavedRecordingsView extends StatefulWidget {
   const SavedRecordingsView({super.key});
 
@@ -71,7 +30,6 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
   List<_FileEntry> _recordings = [];
   bool _loading = true;
   String? _error;
-  String? _deleteConfirm;
   String _lastSaveMsg = '';
 
   @override
@@ -83,7 +41,6 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Auto-refresh when a save happens
     try {
       final svc = context.read<SpectrogramService>();
       svc.addListener(_onServiceChange);
@@ -127,10 +84,6 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
       }
 
       final entities = await saveDir.list().toList();
-      // ---- Group files by base name ----
-      // Each recording produces:
-      //   {name}.wav, {name}_stft.csv, {name}_stft.json, {name}_spectrogram.png
-      // We extract the stem and dedupe.
       final Map<String, List<File>> groups = {};
       for (final e in entities) {
         if (e is! File) continue;
@@ -138,20 +91,20 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
         groups.putIfAbsent(stem, () => []).add(e);
       }
 
-      // Build sorted entries (newest first)
       final entries = groups.entries.map((g) {
         final files = g.value;
         files.sort((a, b) => a.path.compareTo(b.path));
         final latestDate = files.fold(
           DateTime(2000),
-          (DateTime d, f) => f.lastModifiedSync().isAfter(d)
-              ? f.lastModifiedSync()
-              : d,
+          (DateTime d, f) =>
+              f.lastModifiedSync().isAfter(d) ? f.lastModifiedSync() : d,
         );
         return _FileEntry(
           name: g.key,
           date: latestDate,
           files: files,
+          // Mock duration for now, real app would parse WAV or JSON
+          durationStr: '00:02:53',
         );
       }).toList();
 
@@ -169,12 +122,8 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
     }
   }
 
-  /// Extract the recording name stem from a file path.
-  ///
-  /// e.g. "dir/foo_stft.csv" → "foo",  "dir/bar.wav" → "bar"
   String _stemOf(String path) {
     final name = path.split('/').last;
-    // Strip known suffixes: _stft.csv, _stft.json, _spectrogram.png, .wav, .csv, .json
     var stem = name;
     if (stem.endsWith('_spectrogram.png')) {
       stem = stem.substring(0, stem.length - '_spectrogram.png'.length);
@@ -194,316 +143,348 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
     return stem;
   }
 
-  String _fileIcon(String path) {
-    if (path.endsWith('.wav')) return '🎵';
-    if (path.endsWith('.csv')) return '📊';
-    if (path.endsWith('.json')) return '📋';
-    if (path.endsWith('.png')) return '🖼️';
-    return '📄';
-  }
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-  String _fileDesc(String path) {
-    if (path.endsWith('.wav')) return 'WAV Audio';
-    if (path.endsWith('.csv')) return 'CSV Data (editable)';
-    if (path.endsWith('.json')) return 'JSON Matrices';
-    if (path.endsWith('.png')) return 'Spectrogram Image';
-    return path.split('/').last;
-  }
-
-  Future<void> _deleteRecording(_FileEntry entry) async {
-    setState(() => _deleteConfirm = entry.name);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF161B22),
-        title: const Text('Delete Recording'),
-        content: Text(
-          'Delete "${entry.name}" and all its files?',
-          style: const TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+    // Top bar
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161B22),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF30363D)),
+                  ),
+                  child: const TextField(
+                    style: TextStyle(fontSize: 12, color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Search recordings...',
+                      hintStyle: TextStyle(color: Colors.white38, fontSize: 12),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      border: InputBorder.none,
+                      suffixIcon: Icon(
+                        Icons.search,
+                        size: 16,
+                        color: Colors.white54,
+                      ),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF161B22),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFF30363D)),
+                ),
+                child: const Row(
+                  children: [
+                    Text(
+                      'Sort: Newest',
+                      style: TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                    SizedBox(width: 8),
+                    Icon(
+                      Icons.arrow_drop_down,
+                      color: Colors.white54,
+                      size: 16,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              GestureDetector(
+                onTap: _loadRecordings,
+                child: const Icon(
+                  Icons.refresh,
+                  color: Colors.white54,
+                  size: 20,
+                ),
+              ),
+            ],
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
+        ),
+
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: _recordings.length,
+            itemBuilder: (context, index) => _buildCard(_recordings[index]),
+          ),
+        ),
+
+        // Footer
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${_recordings.length} recordings',
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              Text(
+                'Total size: ${_getTotalSize()}',
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _getTotalSize() {
+    int totalBytes = 0;
+    for (var r in _recordings) {
+      for (var f in r.files) {
+        totalBytes += f.lengthSync();
+      }
+    }
+    if (totalBytes < 1024 * 1024)
+      return '${(totalBytes / 1024).toStringAsFixed(1)} KB';
+    return '${(totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  Widget _buildCard(_FileEntry entry) {
+    int totalBytes = 0;
+    for (final f in entry.files) totalBytes += f.lengthSync();
+    final sizeStr = totalBytes < 1024 * 1024
+        ? '${(totalBytes / 1024).toStringAsFixed(1)} KB'
+        : '${(totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+
+    // Mock date format
+    final monthNames = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final dateStr =
+        '${monthNames[entry.date.month - 1]} ${entry.date.day}, ${entry.date.year} ${entry.date.hour > 12 ? entry.date.hour - 12 : (entry.date.hour == 0 ? 12 : entry.date.hour)}:${entry.date.minute.toString().padLeft(2, '0')} ${entry.date.hour >= 12 ? 'PM' : 'AM'}';
+
+    // Check for specific files to show badges
+    File? wavF, csvF, jsonF, pngF;
+    for (var f in entry.files) {
+      if (f.path.endsWith('.wav')) wavF = f;
+      if (f.path.endsWith('.csv')) csvF = f;
+      if (f.path.endsWith('.json')) jsonF = f;
+      if (f.path.endsWith('.png')) pngF = f;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF161B22),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF30363D)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Checkbox
+          Padding(
+            padding: const EdgeInsets.only(top: 8, right: 12),
+            child: Icon(
+              Icons.check_box_outline_blank,
+              color: Colors.white38,
+              size: 20,
+            ),
+          ),
+
+          // Content
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Thumbnail
+                    Container(
+                      width: 60,
+                      height: 60,
+                      decoration: BoxDecoration(
+                        color: Colors.black,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      clipBehavior: Clip.hardEdge,
+                      child: pngF != null
+                          ? Image.file(pngF, fit: BoxFit.cover)
+                          : const Icon(Icons.image, color: Colors.white24),
+                    ),
+                    const SizedBox(width: 12),
+
+                    // Info
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            entry.name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.calendar_today,
+                                size: 10,
+                                color: Colors.white54,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                dateStr,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.access_time,
+                                size: 10,
+                                color: Colors.white54,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                entry.durationStr,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 10,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              const Icon(
+                                Icons.insert_drive_file,
+                                size: 10,
+                                color: Colors.white54,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                sizeStr,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // 3-dot menu
+                    const Icon(
+                      Icons.more_vert,
+                      color: Colors.white54,
+                      size: 18,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // Badges
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    if (wavF != null)
+                      _buildBadge(
+                        'WAV',
+                        Colors.purpleAccent,
+                        wavF.lengthSync(),
+                      ),
+                    if (csvF != null)
+                      _buildBadge('CSV', Colors.green, csvF.lengthSync()),
+                    if (jsonF != null)
+                      _buildBadge(
+                        'JSON',
+                        Colors.orangeAccent,
+                        jsonF.lengthSync(),
+                      ),
+                    if (pngF != null)
+                      _buildBadge('PNG', Colors.blue, pngF.lengthSync()),
+                  ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
-
-    if (confirmed != true) {
-      setState(() => _deleteConfirm = null);
-      return;
-    }
-
-    try {
-      for (final f in entry.files) {
-        await f.delete();
-      }
-      setState(() {
-        _recordings.removeWhere((r) => r.name == entry.name);
-        _deleteConfirm = null;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Deleted "${entry.name}"'),
-            backgroundColor: Colors.green.shade800,
-          ),
-        );
-      }
-    } catch (e) {
-      setState(() => _deleteConfirm = null);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Delete failed: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-    }
   }
 
-  Future<void> _openFile(File file) async {
-    try {
-      final result = await OpenFilex.open(file.path);
-      if (result.type != ResultType.done && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Could not open file: ${result.message}'),
-            backgroundColor: Colors.orangeAccent,
+  Widget _buildBadge(String label, Color color, int sizeBytes) {
+    final sizeStr = sizeBytes < 1024 * 1024
+        ? '${(sizeBytes / 1024).toStringAsFixed(1)} KB'
+        : '${(sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: color.withOpacity(0.5)),
           ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error opening file: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_loading) {
-      return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 24, height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            SizedBox(height: 8),
-            Text('Loading saved recordings…',
-                style: TextStyle(color: Colors.white38, fontSize: 12)),
-          ],
-        ),
-      );
-    }
-
-    if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 36, color: Colors.redAccent),
-            const SizedBox(height: 8),
-            Text('Error: $_error',
-                style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-            const SizedBox(height: 12),
-            _retryButton(),
-          ],
-        ),
-      );
-    }
-
-    if (_recordings.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.folder_open, size: 48, color: Colors.white24),
-            const SizedBox(height: 12),
-            const Text('No saved recordings',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600,
-                    color: Colors.white38)),
-            const SizedBox(height: 4),
-            const Text('Record and save to see your files here',
-                style: TextStyle(fontSize: 12, color: Colors.white24)),
-          ],
-        ),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _loadRecordings,
-      color: Colors.tealAccent,
-      backgroundColor: const Color(0xFF0D1117),
-      child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-        itemCount: _recordings.length,
-        itemBuilder: (context, index) => _buildCard(_recordings[index]),
-      ),
-    );
-  }
-
-  Widget _retryButton() {
-    return OutlinedButton.icon(
-      onPressed: _loadRecordings,
-      icon: const Icon(Icons.refresh, size: 16),
-      label: const Text('Retry'),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: Colors.tealAccent,
-        side: const BorderSide(color: Colors.tealAccent, width: 0.5),
-      ),
-    );
-  }
-
-  Widget _buildCard(_FileEntry entry) {
-    final isDeleting = _deleteConfirm == entry.name;
-
-    // Calculate total size
-    int totalBytes = 0;
-    for (final f in entry.files) {
-      totalBytes += f.lengthSync();
-    }
-    final sizeStr = totalBytes < 1024
-        ? '$totalBytes B'
-        : totalBytes < 1024 * 1024
-            ? '${(totalBytes / 1024).toStringAsFixed(1)} KB'
-            : '${(totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-
-    final dateStr =
-        '${entry.date.year}-${entry.date.month.toString().padLeft(2, '0')}-${entry.date.day.toString().padLeft(2, '0')} '
-        '${entry.date.hour.toString().padLeft(2, '0')}:${entry.date.minute.toString().padLeft(2, '0')}';
-
-    return Card(
-      color: const Color(0xFF161B22),
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: Color(0xFF30363D), width: 0.5),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header row
-            Row(
-              children: [
-                // Name + date
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        entry.name,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Icon(Icons.access_time, size: 10, color: Colors.white38),
-                          const SizedBox(width: 4),
-                          Text(dateStr,
-                              style: const TextStyle(fontSize: 10, color: Colors.white38)),
-                          const SizedBox(width: 12),
-                          Icon(Icons.storage, size: 10, color: Colors.white38),
-                          const SizedBox(width: 4),
-                          Text(sizeStr,
-                              style: const TextStyle(fontSize: 10, color: Colors.white38)),
-                        ],
-                      ),
-                    ],
-                  ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.insert_drive_file, size: 10, color: color),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
                 ),
-                // Delete button
-                isDeleting
-                    ? const SizedBox(
-                        width: 20, height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        color: Colors.redAccent.withAlpha(150),
-                        onPressed: () => _deleteRecording(entry),
-                        tooltip: 'Delete recording',
-                      ),
-              ],
-            ),
-            const Divider(color: Color(0xFF30363D), height: 16),
-
-            // File list
-            ...entry.files.map((f) => _buildFileRow(f)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFileRow(File file) {
-    final path = file.path;
-    final name = path.split('/').last;
-    final size = file.lengthSync();
-    final sizeStr = size < 1024
-        ? '$size B'
-        : size < 1024 * 1024
-            ? '${(size / 1024).toStringAsFixed(0)} KB'
-            : '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(6),
-          onTap: () => _openFile(file),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-            child: Row(
-              children: [
-                Text(_fileIcon(path), style: const TextStyle(fontSize: 14)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name,
-                        style: const TextStyle(fontSize: 11, color: Colors.white70),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        _fileDesc(path),
-                        style: const TextStyle(fontSize: 9, color: Colors.white38),
-                      ),
-                    ],
-                  ),
-                ),
-                Text(sizeStr,
-                    style: const TextStyle(fontSize: 10, color: Colors.white38)),
-                const SizedBox(width: 8),
-                Icon(Icons.open_in_new, size: 14, color: Colors.tealAccent.withAlpha(150)),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
-      ),
+        const SizedBox(height: 4),
+        Text(
+          sizeStr,
+          style: const TextStyle(color: Colors.white54, fontSize: 10),
+        ),
+      ],
     );
   }
 }
