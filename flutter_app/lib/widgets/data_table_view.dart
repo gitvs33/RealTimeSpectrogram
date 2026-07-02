@@ -12,27 +12,10 @@ class StftDataTableView extends StatefulWidget {
 }
 
 class _StftDataTableViewState extends State<StftDataTableView> {
-  final Map<String, TextEditingController> _controllers = {};
-  final ScrollController _scrollController = ScrollController();
-
   String _searchFilter = '';
   bool _showOnlyNonZero = true;
-
-  @override
-  void dispose() {
-    for (final c in _controllers.values) {
-      c.dispose();
-    }
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  TextEditingController _getController(String key, String initialValue) {
-    if (!_controllers.containsKey(key)) {
-      _controllers[key] = TextEditingController(text: initialValue);
-    }
-    return _controllers[key]!;
-  }
+  List<Map<String, String>> _cachedRows = [];
+  bool _rowsDirty = true;
 
   Iterable<Map<String, String>> _generateRows() sync* {
     for (final frame in widget.frames) {
@@ -50,7 +33,8 @@ class _StftDataTableViewState extends State<StftDataTableView> {
   }
 
   List<Map<String, String>> _buildFilteredRows() {
-    final result = <Map<String, String>>[];
+    if (!_rowsDirty && _cachedRows.isNotEmpty) return _cachedRows;
+    _cachedRows.clear();
     for (final row in _generateRows()) {
       if (_showOnlyNonZero && double.tryParse(row['amplitude']!) == 0.0) {
         continue;
@@ -64,10 +48,11 @@ class _StftDataTableViewState extends State<StftDataTableView> {
           continue;
         }
       }
-      result.add(row);
-      if (result.length > 500) break; // Limit for UI performance
+      _cachedRows.add(row);
+      if (_cachedRows.length > 500) break; // Limit for UI performance
     }
-    return result;
+    _rowsDirty = false;
+    return _cachedRows;
   }
 
   void _exportToClipboard() {
@@ -98,6 +83,7 @@ class _StftDataTableViewState extends State<StftDataTableView> {
       );
     }
 
+    // Compute rows outside build to avoid rebuild thrashing
     final rows = _buildFilteredRows();
 
     return Column(
@@ -132,7 +118,10 @@ class _StftDataTableViewState extends State<StftDataTableView> {
                       ),
                       isDense: true,
                     ),
-                    onChanged: (v) => setState(() => _searchFilter = v),
+                    onChanged: (v) => setState(() {
+                      _searchFilter = v;
+                      _rowsDirty = true;
+                    }),
                   ),
                 ),
               ),
@@ -157,7 +146,10 @@ class _StftDataTableViewState extends State<StftDataTableView> {
               const Spacer(),
               Switch(
                 value: _showOnlyNonZero,
-                onChanged: (v) => setState(() => _showOnlyNonZero = v),
+                onChanged: (v) => setState(() {
+                  _showOnlyNonZero = v;
+                  _rowsDirty = true;
+                }),
                 activeColor: const Color(0xFF1E88E5),
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
@@ -254,7 +246,7 @@ class _StftDataTableViewState extends State<StftDataTableView> {
         // Table Body
         Expanded(
           child: ListView.builder(
-            controller: _scrollController,
+            primary: true,
             itemCount: rows.length,
             itemBuilder: (context, index) {
               final row = rows[index];
@@ -389,7 +381,7 @@ class _StftDataTableViewState extends State<StftDataTableView> {
 
   Widget _buildDropdown(String text, {double? width}) {
     return Container(
-      width: width,
+      width: width ?? 140,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: const Color(0xFF161B22),
@@ -397,15 +389,16 @@ class _StftDataTableViewState extends State<StftDataTableView> {
         border: Border.all(color: const Color(0xFF30363D)),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: MainAxisSize.max,
         children: [
-          Expanded(
+          Flexible(
             child: Text(
               text,
               style: const TextStyle(fontSize: 11, color: Colors.white),
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          const SizedBox(width: 4),
           const Icon(Icons.arrow_drop_down, size: 14, color: Colors.white54),
         ],
       ),
