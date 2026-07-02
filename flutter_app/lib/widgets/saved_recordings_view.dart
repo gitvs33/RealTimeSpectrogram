@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
+import '../services/spectrogram_service.dart';
 
 /// A group of files that belong to one recording save.
 class SavedRecording {
@@ -70,11 +72,40 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
   bool _loading = true;
   String? _error;
   String? _deleteConfirm;
+  String _lastSaveMsg = '';
 
   @override
   void initState() {
     super.initState();
     _loadRecordings();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Auto-refresh when a save happens
+    try {
+      final svc = context.read<SpectrogramService>();
+      svc.addListener(_onServiceChange);
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    try {
+      context.read<SpectrogramService>().removeListener(_onServiceChange);
+    } catch (_) {}
+    super.dispose();
+  }
+
+  void _onServiceChange() {
+    try {
+      final svc = context.read<SpectrogramService>();
+      if (svc.saveMessage.isNotEmpty && svc.saveMessage != _lastSaveMsg) {
+        _lastSaveMsg = svc.saveMessage;
+        _loadRecordings();
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadRecordings() async {
@@ -97,7 +128,8 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
 
       final entities = await saveDir.list().toList();
       // ---- Group files by base name ----
-      // Each recording produces: {name}.wav, {name}_stft.csv, {name}_stft.json
+      // Each recording produces:
+      //   {name}.wav, {name}_stft.csv, {name}_stft.json, {name}_spectrogram.png
       // We extract the stem and dedupe.
       final Map<String, List<File>> groups = {};
       for (final e in entities) {

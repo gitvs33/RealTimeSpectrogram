@@ -383,14 +383,22 @@ class SpectrogramService extends ChangeNotifier {
 
       // ── PNG spectrogram image ──
       if (mode == AudioMode.local) {
-        final pngBytes = await SpectrogramRenderer.renderToPng(
-          frames: _recordedFrames,
-          width: 1200,
-          height: 600,
-        );
-        if (pngBytes != null) {
-          await File('${saveDir.path}/${filename}_spectrogram.png')
-              .writeAsBytes(pngBytes);
+        try {
+          final pngBytes = await SpectrogramRenderer.renderToPng(
+            frames: _recordedFrames,
+            width: 1200,
+            height: 600,
+          );
+          if (pngBytes != null) {
+            final pngPath = '${saveDir.path}/${filename}_spectrogram.png';
+            await File(pngPath).writeAsBytes(pngBytes);
+            debugPrint('[save] PNG written: $pngPath (${pngBytes.length} bytes)');
+          } else {
+            debugPrint('[save] PNG render returned null (empty frames?)');
+          }
+        } catch (e) {
+          debugPrint('[save] PNG render/write failed: $e');
+          // Don't abort the whole save — CSV/JSON can still be written
         }
       }
 
