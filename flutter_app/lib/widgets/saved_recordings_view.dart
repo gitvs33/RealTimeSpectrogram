@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 
 /// A group of files that belong to one recording save.
 class SavedRecording {
@@ -225,17 +226,27 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
     }
   }
 
-  Future<void> _shareFile(File file) async {
-    // Show file info — on Android we could use share_plus package,
-    // but for now open a dialog with the file path.
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('File: ${file.path}'),
-        duration: const Duration(seconds: 4),
-        backgroundColor: const Color(0xFF30363D),
-      ),
-    );
+  Future<void> _openFile(File file) async {
+    try {
+      final result = await OpenFilex.open(file.path);
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open file: ${result.message}'),
+            backgroundColor: Colors.orangeAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error opening file: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -413,43 +424,42 @@ class _SavedRecordingsViewState extends State<SavedRecordingsView> {
             : '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        children: [
-          Text(_fileIcon(path), style: const TextStyle(fontSize: 14)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: () => _openFile(file),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: Row(
               children: [
-                Text(
-                  name,
-                  style: const TextStyle(fontSize: 11, color: Colors.white70),
-                  overflow: TextOverflow.ellipsis,
+                Text(_fileIcon(path), style: const TextStyle(fontSize: 14)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        style: const TextStyle(fontSize: 11, color: Colors.white70),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        _fileDesc(path),
+                        style: const TextStyle(fontSize: 9, color: Colors.white38),
+                      ),
+                    ],
+                  ),
                 ),
-                Text(
-                  _fileDesc(path),
-                  style: const TextStyle(fontSize: 9, color: Colors.white38),
-                ),
+                Text(sizeStr,
+                    style: const TextStyle(fontSize: 10, color: Colors.white38)),
+                const SizedBox(width: 8),
+                Icon(Icons.open_in_new, size: 14, color: Colors.tealAccent.withAlpha(150)),
               ],
             ),
           ),
-          Text(sizeStr,
-              style: const TextStyle(fontSize: 10, color: Colors.white38)),
-          const SizedBox(width: 8),
-          // Share / info button
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(4),
-              onTap: () => _shareFile(file),
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: Icon(Icons.info_outline, size: 14, color: Colors.white38),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
