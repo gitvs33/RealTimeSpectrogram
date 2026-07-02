@@ -21,7 +21,7 @@ class SpectrogramApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Real-Time Spectrogram',
+      title: 'Once',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true).copyWith(
         colorScheme: ColorScheme.fromSeed(
@@ -73,7 +73,7 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
           ),
         ),
         title: const Text(
-          'Real-Time Spectrogram',
+          'Once',
           style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
         ),
         centerTitle: false,
@@ -118,7 +118,7 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
             children: [
               ListTile(
                 title: Text(
-                  'Real-Time Spectrogram',
+                  'Once',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
