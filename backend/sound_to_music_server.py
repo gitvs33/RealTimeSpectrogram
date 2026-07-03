@@ -44,7 +44,42 @@ VELOCITY_SCALE = 127
 SAMPLE_RATE_IN = 22050       # librosa load resample
 SAMPLE_RATE_OUT = 44100      # output WAV sample rate
 TEMPO_BPM = 120
-INSTRUMENT = 0               # MIDI program 0 = Piano
+
+# ─── Music Fixes (from music_fixes.md) ────────────────────────────────────
+# Fix 1: Pentatonic scale — C pentatonic: C D E G A
+PENTATONIC = {0, 2, 4, 7, 9}
+
+# Fix 2: Beat grid (eighth-note grid at 90 BPM)
+BPM = 90
+BEAT_DURATION = 60.0 / BPM
+GRID = BEAT_DURATION / 2
+
+# Fix 3: Frequency roles — different instruments per register
+ROLE_CONFIG = {
+    'bass':    {'channel': 1, 'instrument': 32},   # Acoustic Bass
+    'melody':  {'channel': 0, 'instrument': 73},   # Flute
+    'texture': {'channel': 2, 'instrument': 98},   # Crystal
+}
+
+
+def snap_to_pentatonic(midi_note):
+    octave = midi_note // 12
+    pitch_class = midi_note % 12
+    nearest = min(PENTATONIC, key=lambda p: abs(p - pitch_class))
+    return octave * 12 + nearest
+
+
+def snap_to_grid(time_sec):
+    return round(time_sec / GRID) * GRID
+
+
+def assign_role(freq):
+    if freq < 300:
+        return 'bass'
+    elif freq < 2000:
+        return 'melody'
+    else:
+        return 'texture'
 
 # ─── App ───────────────────────────────────────────────────────────────────
 
@@ -106,9 +141,12 @@ async def convert(file: UploadFile = File(...)):
         raise HTTPException(400, "All events too short after filtering")
 
     # ── Step 3: Map events → MIDI notes ──────────────────────────────
-    midi = MIDIFile(1)
-    midi.addTempo(0, 0, TEMPO_BPM)
-    midi.addProgramChange(0, 0, 0, INSTRUMENT)
+    midi = MIDIFile(3)
+    for i in range(3):
+        midi.addTempo(i, 0, TEMPO_BPM)
+    midi.addProgramChange(0, 0, 0, 73)   # Flute on channel 0
+    midi.addProgramChange(1, 1, 0, 32)   # Acoustic Bass on channel 1
+    midi.addProgramChange(2, 2, 0, 98)   # Crystal on channel 2
 
     notes = []  # keep for synthesis
     notes_added = 0
@@ -128,20 +166,27 @@ async def convert(file: UploadFile = File(...)):
 
         note_num = int(69 + 12 * np.log2(freq / 440.0))
         note_num = int(np.clip(note_num, 21, 108))
+        note_num = snap_to_pentatonic(note_num)          # Fix 1
 
         amp = np.max(np.abs(chunk))
         velocity = int(np.clip(amp * VELOCITY_SCALE, 1, VELOCITY_SCALE))
 
-        time_sec = start / sr
+        time_sec = snap_to_grid(start / sr)              # Fix 2
         dur = (end - start) / sr
 
-        midi.addNote(0, 0, note_num, time_sec, dur, velocity)
+        role = assign_role(freq)                          # Fix 3
+        config = ROLE_CONFIG[role]
+        track = {'melody': 0, 'bass': 1, 'texture': 2}[role]
+
+        midi.addNote(track, config['channel'], note_num, time_sec, dur, velocity)
 
         notes.append({
             "note": note_num,
             "velocity": velocity,
             "start": time_sec,
             "duration": dur,
+            "freq": freq,
+            "role": role,
         })
         notes_added += 1
 
