@@ -57,6 +57,11 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "sound-to-music", "endpoints": {"convert": "POST /convert", "health": "GET /health"}}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "sound-to-music"}
