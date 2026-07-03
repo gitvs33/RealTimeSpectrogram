@@ -37,6 +37,7 @@ dependencies:
   record: ^7.1.1
   open_filex: ^4.7.0
   image: ^4.9.1
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:

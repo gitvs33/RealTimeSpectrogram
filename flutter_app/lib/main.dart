@@ -5,6 +5,7 @@ import 'services/spectrogram_service.dart';
 import 'widgets/spectrogram_painter.dart';
 import 'widgets/data_table_view.dart';
 import 'widgets/saved_recordings_view.dart';
+import 'widgets/sound_to_music_view.dart';
 
 void main() {
   runApp(
@@ -26,13 +27,9 @@ class SpectrogramApp extends StatelessWidget {
       theme: ThemeData.dark(useMaterial3: true).copyWith(
         colorScheme: ColorScheme.fromSeed(
           brightness: Brightness.dark,
-          seedColor: const Color(
-            0xFF1E88E5,
-          ), // Using a blue accent like the mockup
+          seedColor: const Color(0xFF1E88E5),
         ),
-        scaffoldBackgroundColor: const Color(
-          0xFF0D1117,
-        ), // very dark background
+        scaffoldBackgroundColor: const Color(0xFF0D1117),
       ),
       home: const SpectrogramHome(),
     );
@@ -49,8 +46,8 @@ class SpectrogramHome extends StatefulWidget {
 class _SpectrogramHomeState extends State<SpectrogramHome> {
   final TextEditingController _filenameCtrl = TextEditingController(text: '');
   int _selectedTab = 0; // 0=spectrogram, 1=phase, 2=data, 3=saved
+  bool _showSoundToMusic = false;
 
-  // Film-strip scrolling offsets
   double _spectrogramScrollOffset = 0;
   double _phaseScrollOffset = 0;
 
@@ -105,70 +102,105 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
           const SizedBox(width: 16),
           IconButton(
             icon: const Icon(Icons.settings, color: Colors.white, size: 20),
-            onPressed: () {
-              // Settings dummy
-            },
+            onPressed: () {},
           ),
         ],
       ),
-      drawer: const Drawer(
-        backgroundColor: Color(0xFF161B22),
+      drawer: Drawer(
+        backgroundColor: const Color(0xFF161B22),
         child: SafeArea(
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ListTile(
-                title: Text(
+              const SizedBox(height: 24),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
                   'Once',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 20,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              const Divider(color: Color(0xFF30363D)),
+              _DrawerItem(
+                icon: Icons.bar_chart,
+                label: 'Spectrogram',
+                selected: !_showSoundToMusic,
+                onTap: () {
+                  setState(() => _showSoundToMusic = false);
+                  Navigator.of(context).pop();
+                },
+              ),
+              _DrawerItem(
+                icon: Icons.music_note,
+                label: 'Sound to Music',
+                selected: _showSoundToMusic,
+                onTap: () {
+                  setState(() => _showSoundToMusic = true);
+                  Navigator.of(context).pop();
+                },
+              ),
+              const Spacer(),
+              const Divider(color: Color(0xFF30363D)),
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'Convert recorded sounds into music\nusing a Python backend pipeline.',
+                  style: TextStyle(color: Colors.white24, fontSize: 11),
                 ),
               ),
             ],
           ),
         ),
       ),
-      body: Consumer<SpectrogramService>(
-        builder: (context, svc, _) {
-          return Column(
-            children: [
-              // ── Tab bar ──
-              Container(
-                color: const Color(0xFF0D1117),
-                child: Row(
+      body: _showSoundToMusic
+          ? const SoundToMusicView()
+          : Consumer<SpectrogramService>(
+              builder: (context, svc, _) {
+                return Column(
                   children: [
-                    _tabButton('Spectrogram', Icons.bar_chart, 0),
-                    _tabButton('Phase View', Icons.data_usage, 1),
-                    _tabButton('Numerical Data', Icons.list, 2),
-                    _tabButton('Saved', Icons.folder, 3),
+                    // ── Tab bar ──
+                    Container(
+                      color: const Color(0xFF0D1117),
+                      child: Row(
+                        children: [
+                          _tabButton('Spectrogram', Icons.bar_chart, 0),
+                          _tabButton('Phase View', Icons.data_usage, 1),
+                          _tabButton('Numerical Data', Icons.list, 2),
+                          _tabButton('Saved', Icons.folder, 3),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1, color: Color(0xFF30363D)),
+
+                    // ── Main content ──
+                    Expanded(
+                      child: _selectedTab == 0
+                          ? _buildSpectrogramView(svc)
+                          : _selectedTab == 1
+                              ? _buildPhaseView(svc)
+                              : _selectedTab == 2
+                                  ? _buildDataView(svc)
+                                  : _buildSavedRecordingsView(),
+                    ),
+
+                    // ── Control panel (Spectrogram tab only) ──
+                    if (_selectedTab == 0) _buildControlPanel(svc),
                   ],
-                ),
-              ),
-              const Divider(height: 1, color: Color(0xFF30363D)),
-
-              // ── Main visualization ──
-              Expanded(
-                child: _selectedTab == 0
-                    ? _buildSpectrogramView(svc)
-                    : _selectedTab == 1
-                    ? _buildPhaseView(svc)
-                    : _selectedTab == 2
-                    ? _buildDataView(svc)
-                    : _buildSavedRecordingsView(),
-              ),
-
-              // ── Control panel (Spectrogram tab only) ──
-              if (_selectedTab == 0) _buildControlPanel(svc),
-            ],
-          );
-        },
-      ),
+                );
+              },
+            ),
     );
   }
 
+  // ──────── Tab buttons ────────────────────────────────────────────────
+
   Widget _tabButton(String label, IconData icon, int index) {
     final isSelected = _selectedTab == index;
-    final color = isSelected
-        ? const Color(0xFF42A5F5)
-        : Colors.white54; // Blue for selected, grey for unselected
+    final color = isSelected ? const Color(0xFF42A5F5) : Colors.white54;
     return Expanded(
       child: GestureDetector(
         onTap: () => setState(() => _selectedTab = index),
@@ -177,9 +209,7 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
-                color: isSelected
-                    ? const Color(0xFF42A5F5)
-                    : Colors.transparent,
+                color: isSelected ? const Color(0xFF42A5F5) : Colors.transparent,
                 width: 2,
               ),
             ),
@@ -205,14 +235,15 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
     );
   }
 
-  // ── Spectrogram (scrollable film-strip) ──
+  // ──────── Spectrogram view ─────────────────────────────────────────
+
   Widget _buildSpectrogramView(SpectrogramService svc) {
     if (!svc.livePreviewActive && svc.recordedFrames.isEmpty) {
       _spectrogramScrollOffset = 0;
       return _buildPreviewPrompt(svc, isPhase: false);
     }
 
-    const frameWidth = 3.0; // fixed pixels per STFT frame column
+    const frameWidth = 3.0;
     final displayFrames = svc.recordedFrames.isNotEmpty
         ? svc.recordedFrames
         : svc.liveFrames;
@@ -222,11 +253,9 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final viewportW = constraints.maxWidth;
-          final totalW =
-              max(viewportW, displayFrames.length * frameWidth);
+          final totalW = max(viewportW, displayFrames.length * frameWidth);
           final maxScroll = max(0.0, totalW - viewportW);
 
-          // Auto-scroll to latest during recording/preview
           if (svc.isRecording || svc.livePreviewActive) {
             _spectrogramScrollOffset = maxScroll;
           } else {
@@ -246,8 +275,7 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
               if (!svc.isRecording && !svc.livePreviewActive) {
                 setState(() {
                   _spectrogramScrollOffset =
-                      (_spectrogramScrollOffset - dx)
-                          .clamp(0.0, maxScroll);
+                      (_spectrogramScrollOffset - dx).clamp(0.0, maxScroll);
                 });
               }
             },
@@ -257,7 +285,8 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
     );
   }
 
-  // ── Phase View (scrollable film-strip) ──
+  // ──────── Phase view ────────────────────────────────────────────────
+
   Widget _buildPhaseView(SpectrogramService svc) {
     if (!svc.livePreviewActive && svc.recordedFrames.isEmpty) {
       _phaseScrollOffset = 0;
@@ -274,8 +303,7 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final viewportW = constraints.maxWidth;
-          final totalW =
-              max(viewportW, displayFrames.length * frameWidth);
+          final totalW = max(viewportW, displayFrames.length * frameWidth);
           final maxScroll = max(0.0, totalW - viewportW);
 
           if (svc.isRecording || svc.livePreviewActive) {
@@ -297,8 +325,7 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
               if (!svc.isRecording && !svc.livePreviewActive) {
                 setState(() {
                   _phaseScrollOffset =
-                      (_phaseScrollOffset - dx)
-                          .clamp(0.0, maxScroll);
+                      (_phaseScrollOffset - dx).clamp(0.0, maxScroll);
                 });
               }
             },
@@ -308,8 +335,6 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
     );
   }
 
-  /// Shared film-strip wrapper: GestureDetector + ClipRect + CustomPaint
-  /// Uses explicit [width]x[height] to avoid layout issues with Size.infinite.
   Widget _buildFilmStrip({
     required CustomPainter painter,
     required double width,
@@ -327,7 +352,8 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
     );
   }
 
-  // ── Data Table ──
+  // ──────── Data view ─────────────────────────────────────────────────
+
   Widget _buildDataView(SpectrogramService svc) {
     final displayFrames = svc.recordedFrames.isNotEmpty
         ? svc.recordedFrames
@@ -343,27 +369,25 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
     return StftDataTableView(frames: displayFrames);
   }
 
-  // ── Saved Recordings ──
+  // ──────── Saved recordings view ─────────────────────────────────────
+
   Widget _buildSavedRecordingsView() {
     return const SavedRecordingsView();
   }
 
-  // ── Controls ──
+  // ──────── Control panel ─────────────────────────────────────────────
+
   Widget _buildControlPanel(SpectrogramService svc) {
     return Container(
       color: const Color(0xFF0D1117),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Buttons and Inputs Row
+          // Buttons row
           Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16.0,
-              vertical: 12.0,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
             child: Row(
               children: [
-                // Record
                 GestureDetector(
                   onTap: () {
                     if (!svc.isRecording) svc.startRecording();
@@ -396,7 +420,6 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                // Stop
                 GestureDetector(
                   onTap: () {
                     if (svc.isRecording) svc.stopRecording();
@@ -429,7 +452,6 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
                   ),
                 ),
                 const Spacer(),
-                // Filename Input
                 Container(
                   width: 140,
                   height: 40,
@@ -445,17 +467,13 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
                     decoration: const InputDecoration(
                       hintText: 'Enter filename...',
                       hintStyle: TextStyle(color: Colors.white38, fontSize: 12),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 12,
-                      ),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                       border: InputBorder.none,
                       isDense: true,
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
-                // Save Button
                 Container(
                   height: 40,
                   margin: const EdgeInsets.only(bottom: 16),
@@ -484,10 +502,9 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
                       style: const TextStyle(color: Colors.white),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1E88E5), // Blue accent
-                      disabledBackgroundColor: const Color(
-                        0xFF1E88E5,
-                      ).withOpacity(0.3),
+                      backgroundColor: const Color(0xFF1E88E5),
+                      disabledBackgroundColor:
+                          const Color(0xFF1E88E5).withOpacity(0.3),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(6),
                       ),
@@ -499,12 +516,9 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
             ),
           ),
 
-          // Frames and Duration display
+          // Frames and duration
           Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 32.0,
-              vertical: 8.0,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 8.0),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
@@ -546,29 +560,24 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
               ],
             ),
           ),
-
           const SizedBox(height: 16),
-
-          // Status bar
           _buildStatusBar(svc),
         ],
       ),
     );
   }
 
-  // ── Status Bar ──
+  // ──────── Status bar ────────────────────────────────────────────────
+
   Widget _buildStatusBar(SpectrogramService svc) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
-        color: Color(0xFF0D1117), // very dark
-        border: Border(
-          top: BorderSide(color: Color(0xFF30363D)),
-        ), // subtle separator
+        color: Color(0xFF0D1117),
+        border: Border(top: BorderSide(color: Color(0xFF30363D))),
       ),
       child: Row(
         children: [
-          // REC indicator
           Container(
             width: 8,
             height: 8,
@@ -587,21 +596,15 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
             ),
           ),
           const Spacer(),
-          // Live frames
           Text(
             'Live Frames: ${svc.liveFrames.length}',
             style: const TextStyle(color: Colors.white54, fontSize: 12),
           ),
           const Spacer(),
-          // Live preview active
           Text(
-            svc.livePreviewActive
-                ? 'Live preview active'
-                : 'Live preview inactive',
+            svc.livePreviewActive ? 'Live preview active' : 'Live preview inactive',
             style: TextStyle(
-              color: svc.livePreviewActive
-                  ? Colors.greenAccent
-                  : Colors.white38,
+              color: svc.livePreviewActive ? Colors.greenAccent : Colors.white38,
               fontSize: 12,
             ),
           ),
@@ -610,7 +613,8 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
     );
   }
 
-  // ── Preview prompt (shown when preview is off) ──
+  // ──────── Preview prompt ───────────────────────────────────────────
+
   Widget _buildPreviewPrompt(SpectrogramService svc, {required bool isPhase}) {
     return Center(
       child: Column(
@@ -649,6 +653,42 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ──────── Drawer item widget ──────────────────────────────────────────────
+
+class _DrawerItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _DrawerItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? const Color(0xFF42A5F5) : Colors.white54;
+    return ListTile(
+      leading: Icon(icon, color: color, size: 22),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+          fontSize: 14,
+        ),
+      ),
+      onTap: onTap,
+      selected: selected,
+      selectedTileColor: const Color(0xFF1E88E5).withOpacity(0.1),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     );
   }
 }
