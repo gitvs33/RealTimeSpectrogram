@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/audio_frame.dart';
+import '../theme/color_lut.dart';
 
 /// Renders a scrollable film-strip spectrogram (frequency vs time heatmap).
 ///
@@ -21,49 +22,7 @@ class SpectrogramPainter extends CustomPainter {
     this.frameWidth = 3.0,
   });
 
-  // Pre-built color lookup table (256 entries, inferno-like)
-  static final Uint8List _colorLut = _buildColorLut();
-
-  static Uint8List _buildColorLut() {
-    // Dark inferno: bottom 25% → pure black for better contrast
-    const colors = [
-      Color(0xFF000004),
-      Color(0xFF0c0887),
-      Color(0xFF4b0f6b),
-      Color(0xFF931e6c),
-      Color(0xFFd4485b),
-      Color(0xFFfb8844),
-      Color(0xFFf6d644),
-      Color(0xFFfcffa4),
-    ];
-    final lut = Uint8List(256 * 4); // RGBA per entry
-    for (int i = 0; i < 256; i++) {
-      double t = i / 255.0;
-      // Bottom 25% → pure black
-      if (t < 0.25) {
-        lut[i * 4] = 0;
-        lut[i * 4 + 1] = 0;
-        lut[i * 4 + 2] = 0;
-        lut[i * 4 + 3] = 255;
-        continue;
-      }
-      // Remap remaining 75% across the gradient
-      t = (t - 0.25) / 0.75;
-      final pos = t * (colors.length - 1);
-      final idx = pos.floor();
-      final frac = pos - idx;
-      final c0 = colors[idx.clamp(0, colors.length - 1)];
-      final c1 = colors[(idx + 1).clamp(0, colors.length - 1)];
-      final r = (c0.r + (c1.r - c0.r) * frac);
-      final g = (c0.g + (c1.g - c0.g) * frac);
-      final b = (c0.b + (c1.b - c0.b) * frac);
-      lut[i * 4] = (r * 255).round().clamp(0, 255);
-      lut[i * 4 + 1] = (g * 255).round().clamp(0, 255);
-      lut[i * 4 + 2] = (b * 255).round().clamp(0, 255);
-      lut[i * 4 + 3] = 255;
-    }
-    return lut;
-  }
+  // Color lookup table — shared with SpectrogramRenderer (see ../theme/color_lut.dart).
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -130,9 +89,9 @@ class SpectrogramPainter extends CustomPainter {
             ? ((db - minDb) / (maxDb - minDb)).clamp(0.0, 1.0)
             : 0.0;
         final colorIdx = (norm * 255).round().clamp(0, 255);
-        final r = _colorLut[colorIdx * 4] / 255.0;
-        final g = _colorLut[colorIdx * 4 + 1] / 255.0;
-        final b = _colorLut[colorIdx * 4 + 2] / 255.0;
+        final r = ColorLut.rgba[colorIdx * ColorLut.stride] / 255.0;
+        final g = ColorLut.rgba[colorIdx * ColorLut.stride + 1] / 255.0;
+        final b = ColorLut.rgba[colorIdx * ColorLut.stride + 2] / 255.0;
 
         final paint = Paint()
           ..color = Color.fromRGBO(

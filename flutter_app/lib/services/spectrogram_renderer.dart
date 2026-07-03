@@ -2,6 +2,7 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 import '../models/audio_frame.dart';
+import '../theme/color_lut.dart';
 
 /// Renders a spectrogram PNG image from recorded [AudioFrame] data.
 ///
@@ -29,53 +30,7 @@ class SpectrogramRenderer {
 
   // ───── internal drawing logic ─────
 
-  /// Inferno-inspired color gradient (256-entry RGB lookup table).
-  static final Uint8List _colorLut = _buildColorLut();
-
-  static Uint8List _buildColorLut() {
-    // Dark inferno: bottom 25% → pure black for better contrast
-    const colors = <int>[
-      0xFF000004,
-      0xFF0c0887,
-      0xFF4b0f6b,
-      0xFF931e6c,
-      0xFFd4485b,
-      0xFFfb8844,
-      0xFFf6d644,
-      0xFFfcffa4,
-    ];
-
-    final lut = Uint8List(256 * 3); // RGB per entry
-    for (int i = 0; i < 256; i++) {
-      double t = i / 255.0;
-      // Bottom 25% → pure black
-      if (t < 0.25) {
-        lut[i * 3] = 0;
-        lut[i * 3 + 1] = 0;
-        lut[i * 3 + 2] = 0;
-        continue;
-      }
-      // Remap remaining 75% across the gradient
-      t = (t - 0.25) / 0.75;
-      final pos = t * (colors.length - 1);
-      final idx = pos.floor();
-      final frac = pos - idx;
-      final c0 = colors[idx.clamp(0, colors.length - 1)];
-      final c1 = colors[(idx + 1).clamp(0, colors.length - 1)];
-
-      final r0 = (c0 >> 16) & 0xFF;
-      final g0 = (c0 >> 8) & 0xFF;
-      final b0 = c0 & 0xFF;
-      final r1 = (c1 >> 16) & 0xFF;
-      final g1 = (c1 >> 8) & 0xFF;
-      final b1 = c1 & 0xFF;
-
-      lut[i * 3] = (r0 + (r1 - r0) * frac).round().clamp(0, 255);
-      lut[i * 3 + 1] = (g0 + (g1 - g0) * frac).round().clamp(0, 255);
-      lut[i * 3 + 2] = (b0 + (b1 - b0) * frac).round().clamp(0, 255);
-    }
-    return lut;
-  }
+  // Color lookup table — shared with SpectrogramPainter (see ../theme/color_lut.dart).
 
   static void _drawSpectrogram(
     img.Image image,
@@ -175,9 +130,9 @@ class SpectrogramRenderer {
           image.setPixelRgb(
             leftMargin + px,
             drawY,
-            _colorLut[colorIdx * 3],
-            _colorLut[colorIdx * 3 + 1],
-            _colorLut[colorIdx * 3 + 2],
+            ColorLut.rgba[colorIdx * ColorLut.stride],
+            ColorLut.rgba[colorIdx * ColorLut.stride + 1],
+            ColorLut.rgba[colorIdx * ColorLut.stride + 2],
           );
         }
       }

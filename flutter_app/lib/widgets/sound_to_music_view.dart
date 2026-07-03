@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
+import '../services/recording_repository.dart';
 
 /// ──────────────────────────────────────────────────────────────────────────
 /// SoundToMusicView
@@ -11,6 +12,7 @@ import 'package:open_filex/open_filex.dart';
 /// server, and play back the resulting instrumental audio.
 ///
 /// The Python server is hosted separately (see sound_to_music_server.py).
+/// File listing and grouping is delegated to [RecordingRepository].
 /// ──────────────────────────────────────────────────────────────────────────
 
 class SoundToMusicView extends StatefulWidget {
@@ -27,18 +29,26 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
   );
 
   // ── State ──
-  List<_RecordingEntry> _recordings = [];
+  RecordingRepository? _repo;
+  List<RecordingGroup> _recordings = [];
   bool _loading = true;
   String? _error;
   String _statusMsg = '';
-  String? _convertingStem; // which recording is currently converting
+  String? _convertingStem;
   bool _showServerConfig = false;
-
   String? _currentResultPath;
 
   @override
   void initState() {
     super.initState();
+    _initRepo();
+  }
+
+  Future<void> _initRepo() async {
+    final dir = await getApplicationDocumentsDirectory();
+    _repo = RecordingRepository(
+      directoryPath: '${dir.path}/spectrogram_saves',
+    );
     _loadRecordings();
   }
 
@@ -48,60 +58,25 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
     super.dispose();
   }
 
-  // ── Load saved recordings from the app's spectrogram_saves dir ──
+  // ── Load saved recordings via shared repository ──
 
   Future<void> _loadRecordings() async {
+    if (_repo == null) return;
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final saveDir = Directory('${dir.path}/spectrogram_saves');
-
-      if (!await saveDir.exists()) {
-        setState(() {
-          _recordings = [];
-          _loading = false;
-          _statusMsg = 'No recordings yet. Record something first!';
-        });
-        return;
-      }
-
-      final entities = await saveDir.list().toList();
-      final Map<String, _RecordingEntry> groups = {};
-
-      for (final e in entities) {
-        if (e is! File) continue;
-        final name = e.path.split('/').last;
-        String stem;
-
-        // Match naming pattern from SpectrogramService.saveRecording
-        if (name.endsWith('.wav') && !name.contains('_stft') && !name.contains('_spectrogram') && !name.contains('_instrumental')) {
-          stem = name.substring(0, name.length - '.wav'.length);
-        } else if (name.endsWith('_stft.csv')) {
-          stem = name.substring(0, name.length - '_stft.csv'.length);
-        } else if (name.endsWith('_stft.json')) {
-          stem = name.substring(0, name.length - '_stft.json'.length);
-        } else if (name.endsWith('_spectrogram.png')) {
-          stem = name.substring(0, name.length - '_spectrogram.png'.length);
-        } else {
-          continue;
-        }
-
-        groups.putIfAbsent(stem, () => _RecordingEntry(name: stem));
-        groups[stem]!.files.add(e);
-      }
-
-      final entries = groups.values.toList();
-      entries.sort((a, b) => b.latestDate.compareTo(a.latestDate));
-
+      final entries = await _repo!.list();
+      if (!mounted) return;
       setState(() {
         _recordings = entries;
         _loading = false;
+        if (entries.isEmpty) _statusMsg = 'No recordings yet. Record something first!';
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -111,7 +86,13 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
 
   // ── Convert selected recording ──
 
-  Future<void> _convert(String stem, File wavFile) async {
+  Future<void> _convert(RecordingGroup entry) async {
+    final wavFile = entry.wavFile;
+    if (wavFile == null) {
+      _showSnack('No WAV file found for this recording');
+      return;
+    }
+
     final serverUrl = _serverCtrl.text.trim();
     if (serverUrl.isEmpty) {
       _showSnack('Enter the server URL first');
@@ -119,20 +100,19 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
     }
 
     setState(() {
-      _convertingStem = stem;
-      _statusMsg = '📤 Uploading $stem to server…';
+      _convertingStem = entry.name;
+      _statusMsg = '📤 Uploading ${entry.name} to server…';
       _currentResultPath = null;
     });
 
     try {
-      // Build full URL
       final uri = Uri.parse('$serverUrl/convert');
       if (!uri.hasScheme) {
         _showError('Invalid URL. Use http://ip:port');
         return;
       }
 
-      // 1) Upload WAV to server
+      // Upload WAV to server
       final request = http.MultipartRequest('POST', uri);
       request.files.add(
         await http.MultipartFile.fromPath('file', wavFile.path),
@@ -150,22 +130,21 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
         return;
       }
 
-      // 2) Read response bytes (instrumental WAV)
+      // Read response bytes (instrumental WAV)
       final bytes = await streamedResp.stream.toBytes();
       if (bytes.lengthInBytes < 1024) {
         _showError('Server returned empty result');
         return;
       }
 
-      // 3) Save result locally
+      // Save result locally
       final dir = await getApplicationDocumentsDirectory();
-      final resultDir = Directory('${dir.path}/spectrogram_saves');
-      final resultPath = '${resultDir.path}/${stem}_instrumental.wav';
+      final resultPath = '${dir.path}/spectrogram_saves/${entry.name}_instrumental.wav';
       await File(resultPath).writeAsBytes(bytes.toList());
 
       setState(() {
         _currentResultPath = resultPath;
-        _statusMsg = '✅ Done! ${(bytes.lengthInBytes / 1024).toStringAsFixed(0)} KB received';
+        _statusMsg = '✅ Done! ${formatBytes(bytes.lengthInBytes)} received';
         _convertingStem = null;
       });
 
@@ -216,8 +195,8 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
 
   int _totalSize() {
     int total = 0;
-    for (var r in _recordings) {
-      for (var f in r.files) {
+    for (final r in _recordings) {
+      for (final f in r.files) {
         total += f.lengthSync();
       }
     }
@@ -502,7 +481,7 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
               ),
               const Spacer(),
               Text(
-                'Total: ${_formatBytes(_totalSize())}',
+                'Total: ${formatBytes(_totalSize())}',
                 style: const TextStyle(color: Colors.white54, fontSize: 12),
               ),
             ],
@@ -521,7 +500,7 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
     );
   }
 
-  Widget _buildCard(_RecordingEntry entry) {
+  Widget _buildCard(RecordingGroup entry) {
     final hasWav = entry.wavFile != null;
     final hasResult = entry.instrumentalFile != null;
 
@@ -566,7 +545,7 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      _formatDate(entry.latestDate),
+                      formatDateTime(entry.lastModified),
                       style: const TextStyle(color: Colors.white54, fontSize: 11),
                     ),
                   ],
@@ -599,7 +578,7 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
             child: ElevatedButton.icon(
               onPressed: (_convertingStem != null || !hasWav)
                   ? null
-                  : () => _convert(entry.name, entry.wavFile!),
+                  : () => _convert(entry),
               icon: _convertingStem == entry.name
                   ? const SizedBox(
                       width: 16,
@@ -639,10 +618,7 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
                   _playResult(entry.instrumentalFile!.path);
                 },
                 icon: const Icon(Icons.play_arrow, size: 18),
-                label: const Text(
-                  'Play Result',
-                  style: TextStyle(fontSize: 13),
-                ),
+                label: const Text('Play Result', style: TextStyle(fontSize: 13)),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: Colors.greenAccent,
                   side: const BorderSide(color: Colors.greenAccent, width: 0.5),
@@ -682,83 +658,12 @@ class _SoundToMusicViewState extends State<SoundToMusicView> {
             ),
             const SizedBox(width: 4),
             Text(
-              _formatBytes(sizeBytes),
+              formatBytes(sizeBytes),
               style: TextStyle(color: color.withOpacity(0.7), fontSize: 9),
             ),
           ],
         ),
       ),
     );
-  }
-
-  // ── Formatting helpers ──
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-  }
-
-  String _formatDate(DateTime dt) {
-    final months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
-    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
-    return '${months[dt.month - 1]} ${dt.day}, ${dt.year} $h:${dt.minute.toString().padLeft(2, '0')} $ampm';
-  }
-}
-
-// ─── Data class ───────────────────────────────────────────────────────────
-
-class _RecordingEntry {
-  final String name;
-  final List<File> files;
-
-  _RecordingEntry({required this.name, List<File>? files})
-      : files = files ?? [];
-
-  File? get wavFile {
-    // Get the raw WAV (not instrumental)
-    for (var f in files) {
-      final name = f.path.split('/').last;
-      if (name.endsWith('.wav') &&
-          !name.contains('_instrumental') &&
-          !name.contains('_stft')) {
-        return f;
-      }
-    }
-    return null;
-  }
-
-  File? get instrumentalFile {
-    for (var f in files) {
-      if (f.path.endsWith('_instrumental.wav')) return f;
-    }
-    return null;
-  }
-
-  File? get jsonFile {
-    for (var f in files) {
-      if (f.path.endsWith('_stft.json')) return f;
-    }
-    return null;
-  }
-
-  File? get csvFile {
-    for (var f in files) {
-      if (f.path.endsWith('_stft.csv')) return f;
-    }
-    return null;
-  }
-
-  DateTime get latestDate {
-    DateTime latest = DateTime(2000);
-    for (var f in files) {
-      final m = f.lastModifiedSync();
-      if (m.isAfter(latest)) latest = m;
-    }
-    return latest;
   }
 }

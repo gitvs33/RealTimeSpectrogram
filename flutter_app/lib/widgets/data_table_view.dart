@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/audio_frame.dart';
+import '../services/stft_data_query.dart';
 
 class StftDataTableView extends StatefulWidget {
   final List<AudioFrame> frames;
@@ -13,9 +14,10 @@ class StftDataTableView extends StatefulWidget {
 
 class _StftDataTableViewState extends State<StftDataTableView> {
   final ScrollController _scrollController = ScrollController();
+  bool _autoScroll = true;
+
   String _searchFilter = '';
   bool _showOnlyNonZero = true;
-  bool _autoScroll = true;
 
   @override
   void initState() {
@@ -26,11 +28,8 @@ class _StftDataTableViewState extends State<StftDataTableView> {
   @override
   void didUpdateWidget(StftDataTableView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // When frames grow, auto-scroll to bottom if in live mode
     if (widget.frames.length > oldWidget.frames.length && _autoScroll) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollToBottom();
-      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     }
   }
 
@@ -43,10 +42,8 @@ class _StftDataTableViewState extends State<StftDataTableView> {
 
   void _onScroll() {
     if (!_scrollController.hasClients) return;
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    final current = _scrollController.offset;
-    // If more than 60px from bottom, user is browsing history
-    _autoScroll = (maxScroll - current) <= 60;
+    _autoScroll =
+        (_scrollController.position.maxScrollExtent - _scrollController.offset) <= 60;
   }
 
   void _scrollToBottom() {
@@ -61,116 +58,27 @@ class _StftDataTableViewState extends State<StftDataTableView> {
     }
   }
 
-  // ── Lazy row computation ──
+  StftDataQuery get _activeQuery => StftDataQuery(
+        searchFilter: _searchFilter,
+        showOnlyNonZero: _showOnlyNonZero,
+      );
 
-  int _binCount() {
-    if (widget.frames.isEmpty) return 0;
-    return widget.frames.first.binCount;
-  }
-
-  /// Total visible rows with current filter.
-  int _totalRows() {
-    if (_searchFilter.isEmpty && !_showOnlyNonZero) {
-      return widget.frames.length * _binCount();
-    }
-    int count = 0;
-    final bc = _binCount();
-    final q = _searchFilter.toLowerCase();
-    for (final frame in widget.frames) {
-      final t = frame.time.toStringAsFixed(3);
-      for (int bi = 0; bi < bc; bi++) {
-        if (_showOnlyNonZero && frame.magnitudes[bi] == 0) continue;
-        if (q.isNotEmpty) {
-          final freq = frame.frequencies[bi].toStringAsFixed(1);
-          final amp = frame.magnitudes[bi].toStringAsFixed(6);
-          final phase = frame.phases[bi].toStringAsFixed(6);
-          if (!t.contains(q) &&
-              !freq.contains(q) &&
-              !amp.contains(q) &&
-              !phase.contains(q)) continue;
-        }
-        count++;
-      }
-    }
-    return count;
-  }
-
-  /// Get row data at [idx] (0-based among visible rows).
-  Map<String, String>? _rowAt(int idx) {
-    if (_searchFilter.isEmpty && !_showOnlyNonZero) {
-      // Fast path: direct index → frame/bin
-      final bc = _binCount();
-      if (bc == 0) return null;
-      final fi = idx ~/ bc;
-      final bi = idx % bc;
-      if (fi >= widget.frames.length) return null;
-      final frame = widget.frames[fi];
-      if (bi >= frame.binCount) return null;
-      return _makeRow(frame, bi);
-    }
-
-    // Slow path: scan visible rows until idx
-    int seen = 0;
-    final bc = _binCount();
-    final q = _searchFilter.toLowerCase();
-    for (final frame in widget.frames) {
-      final t = frame.time.toStringAsFixed(3);
-      for (int bi = 0; bi < bc; bi++) {
-        if (_showOnlyNonZero && frame.magnitudes[bi] == 0) continue;
-        if (q.isNotEmpty) {
-          final freq = frame.frequencies[bi].toStringAsFixed(1);
-          final amp = frame.magnitudes[bi].toStringAsFixed(6);
-          final phase = frame.phases[bi].toStringAsFixed(6);
-          if (!t.contains(q) &&
-              !freq.contains(q) &&
-              !amp.contains(q) &&
-              !phase.contains(q)) continue;
-        }
-        if (seen == idx) return _makeRow(frame, bi, time: t);
-        seen++;
-      }
-    }
-    return null;
-  }
-
-  Map<String, String> _makeRow(AudioFrame frame, int bi, {String? time}) {
-    return {
-      'key': '${frame.time}_$bi',
-      'time': time ?? frame.time.toStringAsFixed(3),
-      'frequency': frame.frequencies[bi].toStringAsFixed(1),
-      'amplitude': frame.magnitudes[bi].toStringAsFixed(6),
-      'phase': frame.phases[bi].toStringAsFixed(6),
-    };
-  }
+  int get _binCount => _activeQuery.binCount(widget.frames);
 
   void _exportToClipboard() {
-    if (widget.frames.isEmpty) return;
-    final sb = StringBuffer('time_s\tfrequency_hz\tamplitude\tphase_radians\n');
-    int lines = 0;
-    const maxLines = 10000;
-    final bc = _binCount();
-    for (final frame in widget.frames) {
-      final t = frame.time.toStringAsFixed(3);
-      for (int bi = 0; bi < bc; bi++) {
-        if (_showOnlyNonZero && frame.magnitudes[bi] == 0) continue;
-        if (lines >= maxLines) break;
-        sb.writeln(
-          '$t\t${frame.frequencies[bi].toStringAsFixed(1)}\t'
-          '${frame.magnitudes[bi].toStringAsFixed(6)}\t'
-          '${frame.phases[bi].toStringAsFixed(6)}',
-        );
-        lines++;
-      }
-      if (lines >= maxLines) break;
-    }
-    Clipboard.setData(ClipboardData(text: sb.toString()));
+    final tsv = _activeQuery.exportTsv(widget.frames);
+    if (tsv.isEmpty) return;
+    Clipboard.setData(ClipboardData(text: tsv));
+
+    final lineCount = '\n'.allMatches(tsv).length;
+    final truncated = tsv.length > 0 && !tsv.endsWith('phases') && lineCount >= 10000;
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            lines >= maxLines
-                ? 'Copied first $maxLines rows (TSV)'
-                : 'Copied $lines rows (TSV)',
+            truncated
+                ? 'Copied first 10K rows (TSV)'
+                : 'Copied ${lineCount - 1} rows (TSV)',
           ),
           duration: const Duration(seconds: 2),
         ),
@@ -186,13 +94,14 @@ class _StftDataTableViewState extends State<StftDataTableView> {
       );
     }
 
+    final query = _activeQuery;
     final totalFrames = widget.frames.length;
-    final binCount = _binCount();
-    final totalRows = _totalRows();
+    final binCount = _binCount;
+    final totalRows = query.totalRows(widget.frames);
 
     return Column(
       children: [
-        // ── Top filter bar ──
+        // ── Search bar ──
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           child: Row(
@@ -230,11 +139,7 @@ class _StftDataTableViewState extends State<StftDataTableView> {
                 ),
               ),
               const SizedBox(width: 12),
-              const Icon(
-                Icons.filter_alt_outlined,
-                color: Colors.white54,
-                size: 20,
-              ),
+              const Icon(Icons.filter_alt_outlined, color: Colors.white54, size: 20),
             ],
           ),
         ),
@@ -290,13 +195,11 @@ class _StftDataTableViewState extends State<StftDataTableView> {
                 ),
               ),
               const Spacer(),
-              // Live/Paused toggle
               GestureDetector(
                 onTap: () {
                   setState(() => _autoScroll = true);
-                  WidgetsBinding.instance.addPostFrameCallback(
-                    (_) => _scrollToBottom(),
-                  );
+                  WidgetsBinding.instance
+                      .addPostFrameCallback((_) => _scrollToBottom());
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -341,51 +244,27 @@ class _StftDataTableViewState extends State<StftDataTableView> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: const Row(
             children: [
-              Expanded(
-                flex: 2,
-                child: Text('Time (s)',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white)),
-              ),
-              Expanded(
-                flex: 2,
-                child: Text('Freq (Hz)',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white)),
-              ),
-              Expanded(
-                flex: 3,
-                child: Text('Amplitude',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white)),
-              ),
-              Expanded(
-                flex: 3,
-                child: Text('Phase (rad)',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white)),
-              ),
+              Expanded(flex: 2, child: Text('Time (s)',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white))),
+              Expanded(flex: 2, child: Text('Freq (Hz)',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white))),
+              Expanded(flex: 3, child: Text('Amplitude',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white))),
+              Expanded(flex: 3, child: Text('Phase (rad)',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white))),
               SizedBox(width: 24),
             ],
           ),
         ),
 
-        // ── Scrollable Table Body ──
+        // ── Scrollable table body ──
         Expanded(
           child: ListView.builder(
             controller: _scrollController,
             itemCount: totalRows,
             itemExtent: 34,
             itemBuilder: (context, index) {
-              final row = _rowAt(index);
+              final row = query.rowAt(widget.frames, index);
               if (row == null) return const SizedBox.shrink();
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
@@ -399,23 +278,21 @@ class _StftDataTableViewState extends State<StftDataTableView> {
                   children: [
                     Expanded(
                       flex: 2,
-                      child: Text(row['time']!,
-                          style: const TextStyle(
-                              fontSize: 11, color: Colors.white)),
+                      child: Text(row.time,
+                          style: const TextStyle(fontSize: 11, color: Colors.white)),
                     ),
                     Expanded(
                       flex: 2,
-                      child: Text(row['frequency']!,
-                          style: const TextStyle(
-                              fontSize: 11, color: Colors.white)),
+                      child: Text(row.frequency,
+                          style: const TextStyle(fontSize: 11, color: Colors.white)),
                     ),
                     Expanded(
                       flex: 3,
                       child: Text(
-                        row['amplitude']!,
+                        row.amplitude,
                         style: TextStyle(
                           fontSize: 11,
-                          color: double.parse(row['amplitude']!) > 0.5
+                          color: (double.tryParse(row.amplitude) ?? 0) > 0.5
                               ? const Color(0xFF4FC3F7)
                               : Colors.white,
                         ),
@@ -423,9 +300,8 @@ class _StftDataTableViewState extends State<StftDataTableView> {
                     ),
                     Expanded(
                       flex: 3,
-                      child: Text(row['phase']!,
-                          style: const TextStyle(
-                              fontSize: 11, color: Colors.white54)),
+                      child: Text(row.phase,
+                          style: const TextStyle(fontSize: 11, color: Colors.white54)),
                     ),
                     const SizedBox(width: 8),
                     const Icon(Icons.more_vert, size: 14, color: Colors.white30),
