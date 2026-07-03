@@ -56,6 +56,11 @@ class SpectrogramService extends ChangeNotifier {
   String get saveMessage => _saveMessage;
   bool get isSaving => _isSaving;
 
+  void clearConnectionError() {
+    _connectionError = '';
+    notifyListeners();
+  }
+
   // ════════════════════════════════════════════════════════════
   //  LOCAL CAPTURE MODE  (mic + STFT on-device)
   // ════════════════════════════════════════════════════════════

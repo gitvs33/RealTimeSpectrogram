@@ -10,7 +10,7 @@ import 'widgets/sound_to_music_view.dart';
 void main() {
   runApp(
     ChangeNotifierProvider(
-      create: (_) => SpectrogramService()..startLivePreview(),
+      create: (_) => SpectrogramService(),
       child: const SpectrogramApp(),
     ),
   );
@@ -616,6 +616,45 @@ class _SpectrogramHomeState extends State<SpectrogramHome> {
   // ──────── Preview prompt ───────────────────────────────────────────
 
   Widget _buildPreviewPrompt(SpectrogramService svc, {required bool isPhase}) {
+    // Show permission error if one exists
+    final error = svc.connectionError;
+    if (error.isNotEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.mic_off, size: 48, color: Colors.redAccent),
+            const SizedBox(height: 16),
+            const Text(
+              'Microphone Access Needed',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white70),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              error,
+              style: const TextStyle(fontSize: 12, color: Colors.white38),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () {
+                svc.clearConnectionError();
+                svc.startLivePreview();
+              },
+              icon: const Icon(Icons.mic, size: 20),
+              label: const Text('Grant Permission & Start'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent.withOpacity(0.2),
+                foregroundColor: Colors.redAccent,
+                side: const BorderSide(color: Colors.redAccent, width: 0.5),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
