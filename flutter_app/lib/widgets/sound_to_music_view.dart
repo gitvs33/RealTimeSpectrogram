@@ -23,7 +23,7 @@ class SoundToMusicView extends StatefulWidget {
 class _SoundToMusicViewState extends State<SoundToMusicView> {
   // ── Server config (user can customise) ──
   final TextEditingController _serverCtrl = TextEditingController(
-    text: 'http://192.168.1.100:8000',
+    text: 'https://realtimespectrogram.onrender.com',
   );
 
   // ── State ──
